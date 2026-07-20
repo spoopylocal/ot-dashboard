@@ -1,6 +1,6 @@
 
 class Component extends DCLogic {
-  state = { data: null, tab: 'tracker', query: '', zoneFilter: 'all', statusFilter: 'all', sortKey: null, sortDir: 1, sel: null, dark: false, barHover: null, cleared: {}, clearedAt: {}, now: 0, confirmClear: null, scrolled: false, noteEdit: null, noteText: '', noDice: null, noteHover: null, datePicker: null, copied: null, admin: null, viewers: 1, live: 'connecting' };
+  state = { data: null, tab: 'tracker', query: '', zoneFilter: 'all', statusFilter: 'all', sortKey: null, sortDir: 1, sel: null, theme: 'light', barHover: null, cleared: {}, clearedAt: {}, now: 0, confirmClear: null, scrolled: false, noteEdit: null, noteText: '', noDice: null, noteHover: null, datePicker: null, copied: null, admin: null, viewers: 1, live: 'connecting' };
 
   componentDidMount() {
     const src = window.__OT_DATA ? Promise.resolve(window.__OT_DATA) : fetch('ot_data.json').then(r => r.json());
@@ -30,7 +30,13 @@ class Component extends DCLogic {
       if (show !== this.state.scrolled) this.setState({ scrolled: show });
     };
     window.addEventListener('scroll', this._onScroll, { passive: true });
-    try { const dm = localStorage.getItem('ot-tracker-darkmode'); if (dm !== null) this.setState({ dark: dm === '1' }); } catch (e) {}
+    // Theme: light (default) / dark / lavender. Falls back to the old
+    // darkmode flag so anyone who'd toggled dark before keeps it.
+    try {
+      const th = localStorage.getItem('ot-tracker-theme');
+      if (th === 'light' || th === 'dark' || th === 'lavender') this.setState({ theme: th });
+      else { const dm = localStorage.getItem('ot-tracker-darkmode'); if (dm !== null) this.setState({ theme: dm === '1' ? 'dark' : 'light' }); }
+    } catch (e) {}
     // Hidden admin panel: Shift+B anywhere outside a form field.
     this._onKeyDown = (e) => {
       if (!(e.shiftKey && (e.key === 'B' || e.key === 'b'))) return;
@@ -964,7 +970,13 @@ class Component extends DCLogic {
   renderVals() {
     const d = this.state.data;
     const darkVars = '--surface:#1a1e24;--surface-2:#15181d;--page:#0e1115;--line:#2a2f36;--line-soft:#23272d;--line-strong:#3a4048;--text:#e9ebee;--muted:#9aa2ad;--faint:#6b7480;--sel-bg:rgba(0,134,234,0.20);';
-    const rootStyle = 'color-scheme:' + (this.state.dark ? 'dark' : 'light') + ';background:var(--page);min-height:100vh;font-family:var(--font-sans);color:var(--text);transition:background 220ms,color 220ms;' + (this.state.dark ? darkVars : '');
+    // Lavender: a soft light theme tinted toward WWT's violet/purple secondary
+    // palette. Surfaces stay near-white with a purple cast; selection uses the
+    // purple accent so the map/table read as one cohesive lavender look.
+    const lavenderVars = '--surface:#fbf9ff;--surface-2:#f1ebfb;--page:#f2eefb;--line:#ddd2f0;--line-soft:#eae2f8;--line-strong:#c7b8e6;--text:#2c2350;--muted:#6c6291;--faint:#9d93c0;--sel-bg:rgba(130,18,196,0.13);';
+    const theme = this.state.theme;
+    const themeVars = theme === 'dark' ? darkVars : theme === 'lavender' ? lavenderVars : '';
+    const rootStyle = 'color-scheme:' + (theme === 'dark' ? 'dark' : 'light') + ';background:var(--page);min-height:100vh;font-family:var(--font-sans);color:var(--text);transition:background 220ms,color 220ms;' + themeVars;
     const cellInput = 'width:160px;background:transparent;border:1px solid transparent;border-radius:4px;padding:5px 7px;font-family:var(--font-mono);font-size:13px;color:var(--text);outline:none;';
     this.cellInputBase = 'width:160px;background:transparent;border:1px solid transparent;border-radius:4px;padding:5px 7px;font-family:var(--font-mono);font-size:13px;color:var(--text);outline:none;';
     const cellDate = 'background:transparent;border:1px solid transparent;border-radius:4px;padding:4px 6px;font-family:var(--font-mono);font-size:12px;color:var(--text);outline:none;cursor:pointer;';
@@ -984,7 +996,10 @@ class Component extends DCLogic {
       scrolled: this.state.scrolled,
       onBackToTop: () => window.scrollTo({ top: 0, behavior: 'smooth' }),
       onSearchJump: () => { const el = document.getElementById('ot-search'); if (!el) return; const top = el.getBoundingClientRect().top + (window.scrollY || 0) - 90; window.scrollTo({ top, behavior: 'smooth' }); setTimeout(() => { try { el.focus(); } catch (e) {} }, 420); },
-      modeBtn: { onClick: () => this.setState(s => { const dark = !s.dark; try { localStorage.setItem('ot-tracker-darkmode', dark ? '1' : '0'); } catch (e) {} return { dark }; }), label: this.state.dark ? '☀ Light' : '☾ Dark' },
+      // One button cycles light → dark → lavender → light. Label shows the
+      // theme you'll switch TO next (matching the original toggle's behaviour).
+      modeBtn: { onClick: () => this.setState(s => { const next = ({ light: 'dark', dark: 'lavender', lavender: 'light' })[s.theme] || 'light'; try { localStorage.setItem('ot-tracker-theme', next); } catch (e) {} return { theme: next }; }),
+        label: ({ light: '☾ Dark', dark: '✿ Lavender', lavender: '☀ Light' })[this.state.theme] || '☾ Dark' },
       viewerCount: this.state.viewers,
       viewerEyeColor: this.state.live === 'live' ? '#4ade80' : (this.state.live === 'reconnecting' ? '#F2A900' : '#8A919B'),
       viewerTitle: (this.state.viewers === 1 ? 'You are the only person viewing this tracker' : this.state.viewers + ' people are viewing this tracker right now')
