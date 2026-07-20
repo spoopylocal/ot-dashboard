@@ -1,6 +1,6 @@
 
 class Component extends DCLogic {
-  state = { data: null, tab: 'tracker', query: '', zoneFilter: 'all', statusFilter: 'all', sortKey: null, sortDir: 1, sel: null, dark: false, barHover: null, cleared: {}, clearedAt: {}, now: 0, confirmClear: null, scrolled: false, noteEdit: null, noteText: '', noDice: null, noteHover: null, datePicker: null, copied: null, admin: null, viewers: 1, live: 'connecting' };
+  state = { data: null, tab: 'tracker', query: '', zoneFilter: 'all', statusFilter: 'all', sortKey: null, sortDir: 1, sel: null, theme: 'light', barHover: null, cleared: {}, clearedAt: {}, now: 0, confirmClear: null, scrolled: false, noteEdit: null, noteText: '', noDice: null, noteHover: null, datePicker: null, copied: null, admin: null, viewers: 1, live: 'connecting' };
 
   componentDidMount() {
     const src = window.__OT_DATA ? Promise.resolve(window.__OT_DATA) : fetch('ot_data.json').then(r => r.json());
@@ -30,7 +30,13 @@ class Component extends DCLogic {
       if (show !== this.state.scrolled) this.setState({ scrolled: show });
     };
     window.addEventListener('scroll', this._onScroll, { passive: true });
-    try { const dm = localStorage.getItem('ot-tracker-darkmode'); if (dm !== null) this.setState({ dark: dm === '1' }); } catch (e) {}
+    // Theme: light / dark / nord. Migrate the old boolean darkmode key so
+    // anyone who previously chose dark keeps it.
+    try {
+      const t = localStorage.getItem('ot-tracker-theme');
+      if (t === 'light' || t === 'dark' || t === 'nord') this.setState({ theme: t });
+      else { const dm = localStorage.getItem('ot-tracker-darkmode'); if (dm !== null) this.setState({ theme: dm === '1' ? 'dark' : 'light' }); }
+    } catch (e) {}
     // Hidden admin panel: Shift+B anywhere outside a form field.
     this._onKeyDown = (e) => {
       if (!(e.shiftKey && (e.key === 'B' || e.key === 'b'))) return;
@@ -68,7 +74,7 @@ class Component extends DCLogic {
     { key: 'Issue/Hold',    label: 'Issue / Hold', color: 'var(--wwt-bright-red)',   kpi: true, sub: 'needs attention' },
     { key: 'WO entered',    label: 'WO entered',   color: 'var(--wwt-dark-blue-50)', derived: true },
     { key: 'DO NOT USE',    label: 'Do not use',   color: 'var(--gray-700)',         hazard: true },
-    { key: 'Pending',       label: 'Empty',        color: 'var(--gray-200)',         reserved: true },
+    { key: 'Pending',       label: 'Empty',        color: 'var(--surface-empty)',    reserved: true },
   ];
   DEFAULT_FIELDS = [
     { key: 'bts',    label: 'BTS Location', type: 'location', builtin: true },
@@ -964,7 +970,14 @@ class Component extends DCLogic {
   renderVals() {
     const d = this.state.data;
     const darkVars = '--surface:#1a1e24;--surface-2:#15181d;--page:#0e1115;--line:#2a2f36;--line-soft:#23272d;--line-strong:#3a4048;--text:#e9ebee;--muted:#9aa2ad;--faint:#6b7480;--sel-bg:rgba(0,134,234,0.20);';
-    const rootStyle = 'color-scheme:' + (this.state.dark ? 'dark' : 'light') + ';background:var(--page);min-height:100vh;font-family:var(--font-sans);color:var(--text);transition:background 220ms,color 220ms;' + (this.state.dark ? darkVars : '');
+    // Nord (nordtheme.com): Polar Night surfaces, Snow Storm text, Frost accents,
+    // Aurora status colors. Remaps the WWT accent tokens too, so the map squares,
+    // KPIs and legend recolor to Nord's muted palette (same meaning, softer tones).
+    // --surface-empty (the "Empty" slot) and --gray-700 (the "Do not use" slot)
+    // are overridden here rather than globally to avoid disturbing other uses.
+    const nordVars = '--page:#2e3440;--surface:#3b4252;--surface-2:#353c4a;--line:#434c5e;--line-soft:#3b4252;--line-strong:#4c566a;--text:#eceff4;--muted:#9aa4b6;--faint:#6c7793;--sel-bg:rgba(136,192,208,0.16);--surface-empty:#434c5e;--gray-700:#4c566a;--accent-green:#a3be8c;--accent-amber:#ebcb8b;--wwt-bright-red:#bf616a;--wwt-bright-red-25:rgba(191,97,106,0.22);--wwt-red-deep:#bf616a;--wwt-light-blue:#88c0d0;--wwt-light-blue-50:#88c0d0;--wwt-blue-deep:#81a1c1;--wwt-dark-blue-50:#b48ead;';
+    const themeVars = this.state.theme === 'dark' ? darkVars : (this.state.theme === 'nord' ? nordVars : '');
+    const rootStyle = 'color-scheme:' + (this.state.theme === 'light' ? 'light' : 'dark') + ';background:var(--page);min-height:100vh;font-family:var(--font-sans);color:var(--text);transition:background 220ms,color 220ms;' + themeVars;
     const cellInput = 'width:160px;background:transparent;border:1px solid transparent;border-radius:4px;padding:5px 7px;font-family:var(--font-mono);font-size:13px;color:var(--text);outline:none;';
     this.cellInputBase = 'width:160px;background:transparent;border:1px solid transparent;border-radius:4px;padding:5px 7px;font-family:var(--font-mono);font-size:13px;color:var(--text);outline:none;';
     const cellDate = 'background:transparent;border:1px solid transparent;border-radius:4px;padding:4px 6px;font-family:var(--font-mono);font-size:12px;color:var(--text);outline:none;cursor:pointer;';
@@ -984,7 +997,14 @@ class Component extends DCLogic {
       scrolled: this.state.scrolled,
       onBackToTop: () => window.scrollTo({ top: 0, behavior: 'smooth' }),
       onSearchJump: () => { const el = document.getElementById('ot-search'); if (!el) return; const top = el.getBoundingClientRect().top + (window.scrollY || 0) - 90; window.scrollTo({ top, behavior: 'smooth' }); setTimeout(() => { try { el.focus(); } catch (e) {} }, 420); },
-      modeBtn: { onClick: () => this.setState(s => { const dark = !s.dark; try { localStorage.setItem('ot-tracker-darkmode', dark ? '1' : '0'); } catch (e) {} return { dark }; }), label: this.state.dark ? '☀ Light' : '☾ Dark' },
+      modeBtn: (() => {
+        // Cycle Light → Dark → Nord → Light. The label shows the theme you'll
+        // switch to next (matching the original toggle's "next state" wording).
+        const order = ['light', 'dark', 'nord'];
+        const next = order[(order.indexOf(this.state.theme) + 1) % order.length];
+        const nextLabel = { light: '☀ Light', dark: '☾ Dark', nord: '❄ Nord' };
+        return { onClick: () => this.setState(() => { try { localStorage.setItem('ot-tracker-theme', next); } catch (e) {} return { theme: next }; }), label: nextLabel[next] };
+      })(),
       viewerCount: this.state.viewers,
       viewerEyeColor: this.state.live === 'live' ? '#4ade80' : (this.state.live === 'reconnecting' ? '#F2A900' : '#8A919B'),
       viewerTitle: (this.state.viewers === 1 ? 'You are the only person viewing this tracker' : this.state.viewers + ' people are viewing this tracker right now')
