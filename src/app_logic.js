@@ -1,6 +1,6 @@
 
 class Component extends DCLogic {
-  state = { data: null, tab: 'tracker', query: '', zoneFilter: 'all', statusFilter: 'all', sortKey: null, sortDir: 1, sel: null, dark: false, barHover: null, cleared: {}, clearedAt: {}, now: 0, confirmClear: null, scrolled: false, noteEdit: null, noteText: '', noDice: null, noteHover: null, datePicker: null, copied: null, admin: null, viewers: 1, live: 'connecting' };
+  state = { data: null, tab: 'tracker', query: '', zoneFilter: 'all', statusFilter: 'all', sortKey: null, sortDir: 1, sel: null, dark: false, split: false, barHover: null, cleared: {}, clearedAt: {}, now: 0, confirmClear: null, scrolled: false, noteEdit: null, noteText: '', noDice: null, noteHover: null, datePicker: null, copied: null, admin: null, viewers: 1, live: 'connecting' };
 
   // Version shown next to the header. Bump this on each release.
   APP_VERSION = 'v4.0';
@@ -33,6 +33,15 @@ class Component extends DCLogic {
       if (show !== this.state.scrolled) this.setState({ scrolled: show });
     };
     window.addEventListener('scroll', this._onScroll, { passive: true });
+    // Split table view: on wide screens the tracker table is cut in half and
+    // shown as two tables side by side (halves the page length). Narrower
+    // windows keep the single long table — the halves wouldn't fit.
+    this._onResize = () => {
+      const split = window.innerWidth >= this.SPLIT_MIN_W;
+      if (split !== this.state.split) this.setState({ split });
+    };
+    window.addEventListener('resize', this._onResize);
+    this._onResize();
     try { const dm = localStorage.getItem('ot-tracker-darkmode'); if (dm !== null) this.setState({ dark: dm === '1' }); } catch (e) {}
     // Hidden admin panel: Shift+B anywhere outside a form field.
     this._onKeyDown = (e) => {
@@ -54,10 +63,16 @@ class Component extends DCLogic {
     if (this._onVisible) document.removeEventListener('visibilitychange', this._onVisible);
     if (this._onFocus) window.removeEventListener('focus', this._onFocus);
     if (this._onOnline) window.removeEventListener('online', this._onOnline);
+    if (this._onResize) window.removeEventListener('resize', this._onResize);
     clearInterval(this._resyncTimer);
     clearTimeout(this._backupSoonTimer);
     clearInterval(this._backupTimer);
   }
+
+  // Viewport width at which the table splits into two side-by-side halves.
+  // Chosen so each half (~940px) fits a fullscreen 1080p monitor without
+  // horizontal scrolling; below this the single long table is kept.
+  SPLIT_MIN_W = 1720;
 
   // === Structure config (statuses / fields / locations) =================
   // Stored as one ot_edits meta row (__config__v1), like version backups, so
@@ -1005,8 +1020,16 @@ class Component extends DCLogic {
     const d = this.state.data;
     const darkVars = '--surface:#1a1e24;--surface-2:#15181d;--page:#0e1115;--line:#2a2f36;--line-soft:#23272d;--line-strong:#3a4048;--text:#e9ebee;--muted:#9aa2ad;--faint:#6b7480;--sel-bg:rgba(0,134,234,0.20);';
     const rootStyle = 'color-scheme:' + (this.state.dark ? 'dark' : 'light') + ';background:var(--page);min-height:100vh;font-family:var(--font-sans);color:var(--text);transition:background 220ms,color 220ms;' + (this.state.dark ? darkVars : '');
-    const cellInput = 'width:160px;background:transparent;border:1px solid transparent;border-radius:4px;padding:5px 7px;font-family:var(--font-mono);font-size:13px;color:var(--text);outline:none;';
-    this.cellInputBase = 'width:160px;background:transparent;border:1px solid transparent;border-radius:4px;padding:5px 7px;font-family:var(--font-mono);font-size:13px;color:var(--text);outline:none;';
+    // Split view compresses the cells so each half-table fits its column.
+    // Inputs get per-field widths sized to the data (WOs are short, LPNs like
+    // "BTS40-10517654" need ~110px of 13px mono to show without clipping).
+    const split = this.state.split;
+    // (Inputs are box-sizing:border-box, so width includes the 14px padding.)
+    const SPLIT_INPUT_W = { wo: '94px', serial: '116px', lpn: '122px' };
+    this._inputWidth = (key) => split ? (SPLIT_INPUT_W[key] || '96px') : '160px';
+    const inputBase = (key) => 'width:' + this._inputWidth(key) + ';background:transparent;border:1px solid transparent;border-radius:4px;padding:5px 7px;font-family:var(--font-mono);font-size:' + (split ? '12px' : '13px') + ';color:var(--text);outline:none;';
+    const cellInput = inputBase('wo');
+    this._inputBase = inputBase;
     const cellDate = 'background:transparent;border:1px solid transparent;border-radius:4px;padding:4px 6px;font-family:var(--font-mono);font-size:12px;color:var(--text);outline:none;cursor:pointer;';
     // Status dropdown: Empty + every selectable status from config (derived
     // "WO entered" and reserved "Pending" are not user-selectable). Keeps the
@@ -1036,6 +1059,8 @@ class Component extends DCLogic {
       return { ...base, total: '—', otPct: '—', otDone: '—', btsDone: '—', activeTotal: '—',
         segs: [], barCap: { color: 'var(--accent-green)', label: 'Loading…', value: '' },
         kpis: [], tabs: [], legend: [], racks: [], zoneOptions: [], columns: [], rows: [],
+        rows2: [], showSecond: false, splitWrapStyle: 'display:block;',
+        tableStyle: 'width:100%;border-collapse:collapse;font-size:13px;min-width:860px;',
         showTracker: true, empty: false, resultCount: 0, query: '',
         sel: { headBg: 'var(--gray-100)', headFg: 'var(--gray-500)', kicker: 'Loading', otLoc: '…', fields: [] } };
     }
@@ -1261,7 +1286,7 @@ class Component extends DCLogic {
     const dupFields = this._fields().filter(f => f.dup);
     const dupCounts = {}; dupFields.forEach(f => { dupCounts[f.key] = dupCount(f.key); });
     const isDupVal = (counts, v) => { v = (v || '').toString().trim(); return !!(v && counts[v] > 1); };
-    const dupInput = (isDup) => this.cellInputBase + (isDup
+    const dupInput = (isDup, key) => this._inputBase(key) + (isDup
       ? 'border-color:var(--wwt-bright-red);background:var(--wwt-bright-red-25);color:var(--wwt-red-deep);font-weight:700;'
       : 'border-color:transparent;');
     const dupParts = [];
@@ -1273,6 +1298,9 @@ class Component extends DCLogic {
     // locked row and is what the caution button toggles to.
     const hazKey = (this._statusList().find(s => s.hazard) || {}).key || 'DO NOT USE';
     const fieldsList = this._fields();
+    // Tighter cell padding in split view so each half-table fits its column.
+    const padLoc = split ? '9px 8px' : '11px 16px';
+    const padCell = split ? '6px 5px' : '6px 10px';
     const rowsOut = rows.map((r, ri) => {
       const m = this.metaFor(r.status);
       const isSel = r.ot === selKey;
@@ -1293,31 +1321,32 @@ class Component extends DCLogic {
         if (f.type === 'location' || f.type === 'zone') {
           return { key: f.key, isRead: true, text: val || '—', onSelect, onCopy, title: 'Right-click to copy',
             showTyping: primary && !!_ed, editingField: _ed ? this._fieldLabel(_ed.field) : '', editingLabel: _ed ? ('Someone is editing ' + this._fieldLabel(_ed.field)) : '',
-            tdStyle: `padding:11px 16px;font-family:var(--font-mono);font-weight:${primary ? '500' : '400'};color:${primary ? 'var(--text)' : 'var(--muted)'};${bdr}white-space:nowrap;cursor:pointer;${primary ? dnuBarStr : ''}` };
+            tdStyle: `padding:${padLoc};font-family:var(--font-mono);font-weight:${primary ? '500' : '400'};color:${primary ? 'var(--text)' : 'var(--muted)'};${bdr}white-space:nowrap;cursor:pointer;${primary ? dnuBarStr : ''}` };
         }
         if (f.type === 'status') {
-          return { key: f.key, isStatus: true, statusVal: (r.status || '').trim(), onChange: (e) => this.updateField(r.ot, 'status', e.target.value), selStyle, onCopy, title: 'Right-click to copy', tdStyle: `padding:6px 10px;${bdr}` };
+          return { key: f.key, isStatus: true, statusVal: (r.status || '').trim(), onChange: (e) => this.updateField(r.ot, 'status', e.target.value), selStyle, onCopy, title: 'Right-click to copy', tdStyle: `padding:${padCell};${bdr}` };
         }
         if (f.type === 'date') {
           return { key: f.key, isDate: true, hasDate: !!(r.date && r.date.trim()), noDate: !(r.date && r.date.trim()), dateText: r.date || '', dnuLock: dnu, onCopy, title: 'Right-click to copy',
             onDateSet: () => { if (dnu) return; this.updateField(r.ot, 'date', this.todayStr()); },
             onDateClear: () => { if (dnu) return; this.updateField(r.ot, 'date', ''); },
             onDateMenu: (e) => { e.preventDefault(); if (dnu) return; const n = new Date(); const cur = (r.date || '').trim(); let y = n.getFullYear(), mm = n.getMonth(); const p = cur.split('/'); if (p.length === 3) { mm = (+p[0]) - 1; y = +p[2]; } this.setState({ datePicker: { ot: r.ot, bts: r.bts, y, m: mm, current: cur } }); },
-            tdStyle: `padding:6px 10px;${bdr}white-space:nowrap;` };
+            tdStyle: `padding:${padCell};${bdr}white-space:nowrap;` };
         }
         if (f.type === 'select') {
           return { key: f.key, isSelect: true, val, options: [{ value: '', label: '—' }].concat((f.options || []).map(o => ({ value: o, label: o }))), onChange: (e) => this.updateField(r.ot, f.key, e.target.value),
-            selStyle: `appearance:auto;border:1px solid var(--line-strong);border-radius:4px;padding:4px 8px;font-family:var(--font-sans);font-size:12px;color:var(--text);background:var(--surface);cursor:pointer;${dnuDim}`, onCopy, title: 'Right-click to copy', tdStyle: `padding:6px 10px;${bdr}white-space:nowrap;` };
+            selStyle: `appearance:auto;border:1px solid var(--line-strong);border-radius:4px;padding:4px 8px;font-family:var(--font-sans);font-size:12px;color:var(--text);background:var(--surface);cursor:pointer;${dnuDim}`, onCopy, title: 'Right-click to copy', tdStyle: `padding:${padCell};${bdr}white-space:nowrap;` };
         }
         // text / number
         const dup = !!(f.dup && isDupVal(dupCounts[f.key], val));
         return { key: f.key, isInput: true, val, dnuLock: dnu,
           onChange: (e) => this.updateField(r.ot, f.key, e.target.value),
-          inputStyle: dupInput(dup) + dnuDim,
+          inputStyle: dupInput(dup, f.key) + dnuDim,
           dupTitle: dup ? ('Duplicate detected — this value appears ' + dupCounts[f.key][val.trim()] + ' times') : '',
-          onCopy, title: 'Right-click to copy', tdStyle: `padding:6px 10px;${bdr}white-space:nowrap;` };
+          onCopy, title: 'Right-click to copy', tdStyle: `padding:${padCell};${bdr}white-space:nowrap;` };
       });
       return { ot: r.ot, cells,
+        actionsTdStyle: `padding:6px ${split ? '4px' : '10px'};border-bottom:1px solid var(--line-soft);text-align:center;white-space:nowrap;`,
         // "Do not use" — caution-button toggle, hazard-striped row, locked fields.
         dnuLock: dnu,
         dnuTitle: dnu ? 'Unmark “Do not use”' : 'Mark location “Do not use”',
@@ -1353,7 +1382,7 @@ class Component extends DCLogic {
         if (!vals.length) { this._toast('Nothing to copy in ' + f.label, e); return; }
         this._copy(vals.join('\n'), e, 'Copied ' + vals.length + ' ' + f.label + (vals.length > 1 ? 's' : ''));
       },
-      style: `text-align:left;padding:11px 16px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${this.state.sortKey === f.key ? '#fff' : 'var(--wwt-light-blue-50)'};border-bottom:1px solid var(--line);cursor:pointer;white-space:nowrap;user-select:none;`,
+      style: `text-align:left;padding:${split ? '9px 10px' : '11px 16px'};font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${this.state.sortKey === f.key ? '#fff' : 'var(--wwt-light-blue-50)'};border-bottom:1px solid var(--line);cursor:pointer;white-space:nowrap;user-select:none;`,
     }));
     columns.push({ label: '', arrow: '', title: '', onSort: () => {}, onCopy: (e) => { if (e) e.preventDefault(); }, style: 'width:44px;padding:11px 10px;border-bottom:1px solid var(--line);' });
 
@@ -1392,7 +1421,17 @@ class Component extends DCLogic {
       onSearch: (e) => this.setState({ query: e.target.value }),
       onZone: (e) => this.setState({ zoneFilter: e.target.value }),
       onBarLeave: () => this.setState({ barHover: null }),
-      zoneOptions, zoneCount: zones.length, columns, rows: rowsOut, resultCount, empty: resultCount === 0,
+      zoneOptions, zoneCount: zones.length, columns, resultCount, empty: resultCount === 0,
+      // Split view: on wide screens the rows are cut in half into two tables
+      // shown side by side (template renders the second only when showSecond).
+      // The wrapper breaks out of the 1360px page column to use the viewport.
+      rows: split ? rowsOut.slice(0, Math.ceil(rowsOut.length / 2)) : rowsOut,
+      rows2: split ? rowsOut.slice(Math.ceil(rowsOut.length / 2)) : [],
+      showSecond: split && rowsOut.length > 1,
+      splitWrapStyle: split
+        ? 'position:relative;left:50%;transform:translateX(-50%);width:min(99vw,1900px);display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;'
+        : 'display:block;',
+      tableStyle: `width:100%;border-collapse:collapse;font-size:13px;min-width:${split ? '640px' : '860px'};`,
       hasDup, dupMsg,
       showConfirm: !!this.state.confirmClear,
       confirmLoc: this.shortLoc(this.state.confirmClear),
