@@ -2,6 +2,9 @@
 class Component extends DCLogic {
   state = { data: null, tab: 'tracker', query: '', zoneFilter: 'all', statusFilter: 'all', sortKey: null, sortDir: 1, sel: null, dark: false, barHover: null, cleared: {}, clearedAt: {}, now: 0, confirmClear: null, scrolled: false, noteEdit: null, noteText: '', noDice: null, noteHover: null, datePicker: null, copied: null, admin: null, viewers: 1, live: 'connecting' };
 
+  // Version shown next to the header. Bump this on each release.
+  APP_VERSION = 'v4.0';
+
   componentDidMount() {
     const src = window.__OT_DATA ? Promise.resolve(window.__OT_DATA) : fetch('ot_data.json').then(r => r.json());
     Promise.resolve(this._initSupabase())
@@ -1012,7 +1015,7 @@ class Component extends DCLogic {
     const statusOptions = [{ value: '', label: 'Empty' }].concat(
       this._statusList().filter(s => !s.derived && !s.reserved)
         .map(s => ({ value: s.key, label: optLabel[s.key] || s.label })));
-    const base = { rootStyle, cellInput, cellDate, statusOptions, batchId: 'LY022426-23', zoneCount: 8,
+    const base = { rootStyle, cellInput, cellDate, statusOptions, batchId: 'LY022426-23', zoneCount: 8, appVersion: this.APP_VERSION,
       infoOpen: this.state.infoOpen,
       infoBtn: { onClick: () => this.setState(s => ({ infoOpen: !s.infoOpen })) },
       showCopied: !!this.state.copied,
@@ -1163,7 +1166,7 @@ class Component extends DCLogic {
           const fade = this.state.statusFilter !== 'all' && !this._statusInFilter(st);
           const border = st === 'Pending' ? 'inset 0 0 0 1px var(--line-strong)' : 'inset 0 0 0 1px rgba(0,0,0,0.10)';
           const primaryLoc = st === 'OT Completed' ? rec.ot : rec.bts;
-          return { title: primaryLoc + ' · ' + m.label + ' · right-click to copy WO/Serial/LPN',
+          return { title: primaryLoc + ' · ' + m.label + ' · double-click to jump to row · right-click to copy WO/Serial/LPN',
             onSelect: () => this.setState({ sel: rec }),
             onCopy: (e) => {
               if (e) e.preventDefault();
@@ -1336,14 +1339,23 @@ class Component extends DCLogic {
 
     const columns = fieldsList.map(f => ({
       label: f.label, arrow: this.state.sortKey === f.key ? (this.state.sortDir === 1 ? ' ↑' : ' ↓') : '',
+      title: 'Click to sort · Right-click to copy this column',
       onSort: () => this.setState(st => {
         if (st.sortKey !== f.key) return { sortKey: f.key, sortDir: 1 };   // sort ascending
         if (st.sortDir === 1) return { sortDir: -1 };                       // then descending
         return { sortKey: null, sortDir: 1 };                              // then back to custom order
       }),
+      // Right-click the header → copy the whole column: every visible row's
+      // value (current filters + sort order), one per line, empties skipped.
+      onCopy: (e) => {
+        if (e) e.preventDefault();
+        const vals = rows.map(r => (r[f.key] == null ? '' : String(r[f.key])).trim()).filter(Boolean);
+        if (!vals.length) { this._toast('Nothing to copy in ' + f.label, e); return; }
+        this._copy(vals.join('\n'), e, 'Copied ' + vals.length + ' ' + f.label + (vals.length > 1 ? 's' : ''));
+      },
       style: `text-align:left;padding:11px 16px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${this.state.sortKey === f.key ? '#fff' : 'var(--wwt-light-blue-50)'};border-bottom:1px solid var(--line);cursor:pointer;white-space:nowrap;user-select:none;`,
     }));
-    columns.push({ label: '', arrow: '', onSort: () => {}, style: 'width:44px;padding:11px 10px;border-bottom:1px solid var(--line);' });
+    columns.push({ label: '', arrow: '', title: '', onSort: () => {}, onCopy: (e) => { if (e) e.preventDefault(); }, style: 'width:44px;padding:11px 10px;border-bottom:1px solid var(--line);' });
 
     const zoneOptions = [{ value: 'all', label: 'All zones' }, ...zones.map(z => ({ value: z, label: 'Zone ' + z }))];
 
