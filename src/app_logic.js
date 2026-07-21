@@ -302,13 +302,18 @@ class Component extends DCLogic {
           return;
         }
         if (ot.indexOf('__') === 0) return; // other meta rows (backups etc.) are not locations
-        // Ignore stale / our own echoed updates: a delayed event carrying an
-        // older value must not overwrite a newer local change (e.g. a clear).
-        const t = (payload.new && payload.new.updated_at) ? new Date(payload.new.updated_at).getTime() : 0;
-        this._appliedAt = this._appliedAt || {};
-        if (t && this._appliedAt[ot] && t <= this._appliedAt[ot]) return;
-        if (t) this._appliedAt[ot] = t;
+        // Never judge staleness by comparing updated_at against our own writes:
+        // that timestamp comes from the writer's machine clock, and clock skew
+        // between machines made clients ignore each other's changes until a full
+        // page reload. Instead: skip rows the user is editing right now (their
+        // debounced save lands shortly), skip echoes/no-ops (identical content),
+        // and skip rows we wrote moments ago (a delayed echo of our own earlier
+        // value must not revert a newer local change). Anything a skip leaves
+        // stale is reconciled by the next _resync — the datastore wins there.
         const edits = (payload.new && payload.new.edits) || {};
+        if ((this._saveTimers || {})[ot]) return;
+        if (this._sameEdits(this._edits[ot], edits)) return;
+        if (this._recentWrite(ot)) return;
         this._edits[ot] = edits;
         this.setState(s => {
           if (!s.data) return {};
@@ -335,9 +340,8 @@ class Component extends DCLogic {
     if (!this._sb || this._resyncing) return;
     this._resyncing = true;
     try {
-      const { data, error } = await this._sb.from('ot_edits').select('ot,edits,updated_at');
+      const { data, error } = await this._sb.from('ot_edits').select('ot,edits');
       if (error) throw error;
-      this._appliedAt = this._appliedAt || {};
       const pending = this._saveTimers || {};
       const next = {};
       let cfgRow = null;
@@ -345,15 +349,22 @@ class Component extends DCLogic {
         const ot = row.ot || '';
         if (ot === this.CFG_KEY) { cfgRow = row.edits || {}; return; }
         if (ot.indexOf('__') === 0) return;
-        // Keep our local value if the user is mid-edit here, or if we've applied
-        // something at least as new as this row (our own just-saved change).
-        const t = row.updated_at ? new Date(row.updated_at).getTime() : 0;
-        if (pending[ot] || (t && this._appliedAt[ot] && t <= this._appliedAt[ot])) {
+        // Keep our local value only while the user is mid-edit here or we wrote
+        // this row seconds ago (the save may still be in flight). Otherwise the
+        // datastore is the source of truth — no timestamp comparison: row
+        // timestamps come from other machines' clocks, and trusting them made a
+        // client with a fast clock ignore every slower writer until a reload.
+        if (pending[ot] || this._recentWrite(ot)) {
           next[ot] = this._edits[ot] || row.edits || {};
           return;
         }
-        if (t) this._appliedAt[ot] = t;
         next[ot] = row.edits || {};
+      });
+      // Rows we're editing that the server doesn't have yet (first save still
+      // in flight) must survive the rebuild too.
+      Object.keys(this._edits).forEach(ot => {
+        if (ot.indexOf('__') === 0) return;
+        if (next[ot] === undefined && (pending[ot] || this._recentWrite(ot))) next[ot] = this._edits[ot];
       });
       this._edits = next;
       if (cfgRow) this._applyConfig(cfgRow);
@@ -370,15 +381,35 @@ class Component extends DCLogic {
 
   loadEdits() { return this._edits; }
 
+  // How long a local write protects its row from being overwritten by realtime
+  // events or a resync. Long enough to cover an in-flight upsert and its echo;
+  // short enough that another client's genuine change lands by the next resync.
+  RECENT_WRITE_MS = 5000;
+  _recentWrite(ot) { return !!(this._localWriteAt && this._localWriteAt[ot] && Date.now() - this._localWriteAt[ot] < this.RECENT_WRITE_MS); }
+  // Order-insensitive equality for two edits objects (Postgres jsonb reorders
+  // keys, so a stringify compare would call our own echoes "different").
+  // A missing field and an empty one are the same thing everywhere in the app.
+  _sameEdits(a, b) {
+    a = a || {}; b = b || {};
+    const keys = Object.keys(a).concat(Object.keys(b));
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      const av = a[k] == null ? '' : String(a[k]);
+      const bv = b[k] == null ? '' : String(b[k]);
+      if (av !== bv) return false;
+    }
+    return true;
+  }
+
   // Write the current edits for one OT to local storage + Supabase.
   _persist(ot) {
     try { localStorage.setItem(this.LS_KEY, JSON.stringify(this._edits)); } catch (err) {}
     if (this._sb) {
-      const ts = Date.now();
-      this._appliedAt = this._appliedAt || {};
-      this._appliedAt[ot] = ts;   // so our own realtime echo is treated as not-stale
+      // Local-clock stamp, only ever compared against this machine's clock.
+      this._localWriteAt = this._localWriteAt || {};
+      this._localWriteAt[ot] = Date.now();
       this._sb.from('ot_edits')
-        .upsert({ ot: ot, edits: this._edits[ot], updated_at: new Date(ts).toISOString() }, { onConflict: 'ot' })
+        .upsert({ ot: ot, edits: this._edits[ot], updated_at: new Date().toISOString() }, { onConflict: 'ot' })
         .then(({ error }) => { if (error) console.warn('Supabase save failed.', error); });
     }
   }
@@ -623,12 +654,12 @@ class Component extends DCLogic {
       const ts = Date.now();
       const iso = new Date(ts).toISOString();
       const rows = [];
-      this._appliedAt = this._appliedAt || {};
+      this._localWriteAt = this._localWriteAt || {};
       [...new Set([...Object.keys(snap), ...Object.keys(this._canonSnapshot())])].forEach(ot => {
         const target = {};
         this._bkFields().forEach(f => { target[f] = (snap[ot] && snap[ot][f]) || ''; });
         rows.push({ ot, edits: target, updated_at: iso });
-        this._appliedAt[ot] = ts;
+        this._localWriteAt[ot] = ts;
         this._edits[ot] = target;
       });
       if (rows.length) {
@@ -881,7 +912,11 @@ class Component extends DCLogic {
     const fields = { wo: '', serial: '', lpn: '', status: '', date: '' };
     snapshot.note = cur.note || '';
     fields.note = '';
-    Object.keys(fields).forEach(f => this.saveEdit(ot, f, fields[f]));
+    // One write for the whole clear (was one upsert per field — six racing
+    // requests and six realtime events on other clients for a single click).
+    this._edits[ot] = this._edits[ot] || {};
+    Object.keys(fields).forEach(f => { this._edits[ot][f] = fields[f]; });
+    this._persist(ot);
     this.setState(s => {
       const records = s.data.records.map(r => r.ot === ot ? { ...r, ...fields } : r);
       const sel = s.sel && s.sel.ot === ot ? { ...s.sel, ...fields } : s.sel;
@@ -903,7 +938,9 @@ class Component extends DCLogic {
   restoreRow(ot) {
     const snapshot = this.state.cleared[ot];
     if (!snapshot) return;
-    Object.keys(snapshot).forEach(f => this.saveEdit(ot, f, snapshot[f]));
+    this._edits[ot] = this._edits[ot] || {};
+    Object.keys(snapshot).forEach(f => { this._edits[ot][f] = snapshot[f]; });
+    this._persist(ot);
     clearTimeout(this._restoreTimers && this._restoreTimers[ot]);
     this.setState(s => {
       const records = s.data.records.map(r => r.ot === ot ? { ...r, ...snapshot } : r);
