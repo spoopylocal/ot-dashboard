@@ -1336,14 +1336,23 @@ class Component extends DCLogic {
 
     const columns = fieldsList.map(f => ({
       label: f.label, arrow: this.state.sortKey === f.key ? (this.state.sortDir === 1 ? ' ↑' : ' ↓') : '',
+      title: 'Click to sort · Right-click to copy this column',
       onSort: () => this.setState(st => {
         if (st.sortKey !== f.key) return { sortKey: f.key, sortDir: 1 };   // sort ascending
         if (st.sortDir === 1) return { sortDir: -1 };                       // then descending
         return { sortKey: null, sortDir: 1 };                              // then back to custom order
       }),
+      // Right-click the header → copy the whole column: every visible row's
+      // value (current filters + sort order), one per line, empties skipped.
+      onCopy: (e) => {
+        if (e) e.preventDefault();
+        const vals = rows.map(r => (r[f.key] == null ? '' : String(r[f.key])).trim()).filter(Boolean);
+        if (!vals.length) { this._toast('Nothing to copy in ' + f.label, e); return; }
+        this._copy(vals.join('\n'), e, 'Copied ' + vals.length + ' ' + f.label + (vals.length > 1 ? 's' : ''));
+      },
       style: `text-align:left;padding:11px 16px;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${this.state.sortKey === f.key ? '#fff' : 'var(--wwt-light-blue-50)'};border-bottom:1px solid var(--line);cursor:pointer;white-space:nowrap;user-select:none;`,
     }));
-    columns.push({ label: '', arrow: '', onSort: () => {}, style: 'width:44px;padding:11px 10px;border-bottom:1px solid var(--line);' });
+    columns.push({ label: '', arrow: '', title: '', onSort: () => {}, onCopy: (e) => { if (e) e.preventDefault(); }, style: 'width:44px;padding:11px 10px;border-bottom:1px solid var(--line);' });
 
     const zoneOptions = [{ value: 'all', label: 'All zones' }, ...zones.map(z => ({ value: z, label: 'Zone ' + z }))];
 

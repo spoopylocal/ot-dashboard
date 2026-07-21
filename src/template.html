@@ -710,7 +710,7 @@
             <sc-raw-thead>
               <sc-raw-tr style="background: var(--wwt-dark-blue);">
                 <sc-for list="{{ columns }}" as="col" hint-placeholder-count="7">
-                  <sc-raw-th sc-camel-on-click="{{ col.onSort }}" style="{{ col.style }}">{{ col.label }}{{ col.arrow }}</sc-raw-th>
+                  <sc-raw-th sc-camel-on-click="{{ col.onSort }}" sc-camel-on-context-menu="{{ col.onCopy }}" title="{{ col.title }}" style="{{ col.style }}">{{ col.label }}{{ col.arrow }}</sc-raw-th>
                 </sc-for>
               </sc-raw-tr>
             </sc-raw-thead>
