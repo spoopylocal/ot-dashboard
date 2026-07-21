@@ -1166,7 +1166,7 @@ class Component extends DCLogic {
           const fade = this.state.statusFilter !== 'all' && !this._statusInFilter(st);
           const border = st === 'Pending' ? 'inset 0 0 0 1px var(--line-strong)' : 'inset 0 0 0 1px rgba(0,0,0,0.10)';
           const primaryLoc = st === 'OT Completed' ? rec.ot : rec.bts;
-          return { title: primaryLoc + ' · ' + m.label + ' · right-click to copy WO/Serial/LPN',
+          return { title: primaryLoc + ' · ' + m.label + ' · double-click to jump to row · right-click to copy WO/Serial/LPN',
             onSelect: () => this.setState({ sel: rec }),
             onCopy: (e) => {
               if (e) e.preventDefault();
