@@ -1164,6 +1164,24 @@
     b.addEventListener('click',function(e){e.stopPropagation(); go(hdr.querySelector('span.sc-interp').textContent.trim());});
     hdr.appendChild(b);
   }
+  // Double-click a map square → jump to that location's row, same as the
+  // detail card's "go to" arrow. Map squares are the only elements styled
+  // aspect-ratio:1; their title starts with the location code before " · ".
+  document.addEventListener('dblclick',function(e){
+    var el=e.target;
+    while(el && el.nodeType===1 && el!==document.body){
+      var sty=(el.getAttribute&&el.getAttribute('style'))||'';
+      if(/aspect-ratio:\s*1/.test(sty)){
+        var ti=(el.getAttribute('title')||'');
+        if(/Obstructed/.test(ti)) return;            // no table row for obstructed slots
+        var loc=ti.split(' · ')[0].trim();
+        if(loc) go(loc);
+        return;
+      }
+      el=el.parentElement;
+    }
+  });
+
   var q=false;
   new MutationObserver(function(){ if(q) return; q=true; requestAnimationFrame(function(){q=false; enhance();}); })
     .observe(document.documentElement,{childList:true,subtree:true});
