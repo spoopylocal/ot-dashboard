@@ -1177,9 +1177,10 @@ class Component extends DCLogic {
               if (!parts.length) { this._toast('Nothing to copy here', e); return; }
               this._copy(parts.join('\n'), e, 'Copied ' + names.join(' · '));
             },
-            // Issue/Hold squares carry the same caution-yellow stripes as the
-            // table row, laid over the status color.
-            style: `width:100%;aspect-ratio:1;border-radius:4px;cursor:pointer;position:relative;background-color:${m.color};${st === 'Issue/Hold' ? 'background-image:repeating-linear-gradient(45deg,rgba(242,169,0,0.95) 0 3px,transparent 3px 8px);' : ''}box-shadow:${isSel?'0 0 0 2px var(--text)':border};opacity:${fade?0.25:1};transition:opacity 140ms,box-shadow 140ms,transform 140ms,filter 140ms;` };
+            // Striped squares mirror the table rows: Issue/Hold gets white
+            // stripes over its red, "Do not use" (hazard) white stripes over
+            // its near-black — the black-and-white barricade look.
+            style: `width:100%;aspect-ratio:1;border-radius:4px;cursor:pointer;position:relative;background-color:${m.color};${st === 'Issue/Hold' ? 'background-image:repeating-linear-gradient(45deg,rgba(255,255,255,0.60) 0 3px,transparent 3px 8px);' : (m.hazard ? 'background-image:repeating-linear-gradient(45deg,rgba(255,255,255,0.85) 0 3px,transparent 3px 8px);' : '')}box-shadow:${isSel?'0 0 0 2px var(--text)':border};opacity:${fade?0.25:1};transition:opacity 140ms,box-shadow 140ms,transform 140ms,filter 140ms;` };
         }) };
     });
 
@@ -1284,13 +1285,16 @@ class Component extends DCLogic {
       const dark = st0 !== 'Pending';
       const dnu = !!(this.META[st0] && this.META[st0].hazard);
       const dnuDim = dnu ? 'opacity:0.5;' : '';
-      const dnuBarStr = dnu ? 'box-shadow: inset 4px 0 0 var(--wwt-bright-red);' : '';
-      // Issue/Hold rows get the same full-row treatment as "Do not use" — a
-      // caution-yellow stripe band plus an amber edge bar — but stay editable.
+      // "Do not use" rows wear black-and-white barricade stripes (theme-aware:
+      // the black/white bands are laid translucently over the surface) with a
+      // text-colored edge bar; they stay locked as before.
+      const dnuBarStr = dnu ? 'box-shadow: inset 4px 0 0 var(--text);' : '';
+      // Issue/Hold rows get the red stripe band + red edge bar (the treatment
+      // "Do not use" used to have) but stay editable.
       const issueRow = !dnu && st0 === 'Issue/Hold';
-      const issueBarStr = issueRow ? 'box-shadow: inset 4px 0 0 var(--accent-amber);' : '';
+      const issueBarStr = issueRow ? 'box-shadow: inset 4px 0 0 var(--wwt-bright-red);' : '';
       const _ed = (this.state.editing || {})[r.ot];
-      const selStyle = `appearance:auto;border:1px solid ${dark ? 'transparent' : 'var(--line-strong)'};border-radius:999px;padding:4px 8px;font-family:var(--font-sans);font-size:11px;font-weight:700;cursor:pointer;background:${dnu ? 'var(--wwt-bright-red)' : m.color};color:${dark ? '#fff' : 'var(--gray-600)'};`;
+      const selStyle = `appearance:auto;border:1px solid ${dark ? 'transparent' : 'var(--line-strong)'};border-radius:999px;padding:4px 8px;font-family:var(--font-sans);font-size:11px;font-weight:700;cursor:pointer;background:${m.color};color:${dark ? '#fff' : 'var(--gray-600)'};`;
       const onSelect = () => this.setState({ sel: r });
       // One cell per configured field, rendered by type in the template.
       const cells = fieldsList.map((f, ci) => {
@@ -1341,9 +1345,9 @@ class Component extends DCLogic {
         restoreSecs: this.state.clearedAt[r.ot] ? Math.max(0, Math.ceil((60000 - (this.state.now - this.state.clearedAt[r.ot])) / 1000)) : 0,
         onRestoreRow: () => this.restoreRow(r.ot),
         rowStyle: dnu
-          ? `background-color:rgba(238,40,42,0.09);background-image:repeating-linear-gradient(45deg,rgba(238,40,42,0.16) 0 7px,transparent 7px 14px);transition:background 120ms;`
+          ? `background-color:var(--surface-2);background-image:repeating-linear-gradient(45deg,rgba(0,0,0,0.30) 0 7px,rgba(255,255,255,0.30) 7px 14px);transition:background 120ms;`
           : issueRow
-          ? `background-color:rgba(242,169,0,0.10);background-image:repeating-linear-gradient(45deg,rgba(242,169,0,0.18) 0 7px,transparent 7px 14px);transition:background 120ms;`
+          ? `background-color:rgba(238,40,42,0.09);background-image:repeating-linear-gradient(45deg,rgba(238,40,42,0.16) 0 7px,transparent 7px 14px);transition:background 120ms;`
           : `background:${isSel ? 'var(--sel-bg)' : (ri % 2 ? 'var(--surface-2)' : 'var(--surface)')};transition:background 120ms;` };
     });
 
