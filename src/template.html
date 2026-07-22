@@ -581,45 +581,36 @@
 
   <div style="max-width: 1360px; margin: 0 auto; padding: 32px 40px 80px;">
 
-    <!-- Headline + progress -->
-    <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; flex-wrap: wrap; margin-bottom: 28px;">
-      <div style="display: flex; flex-direction: column; gap: 10px;">
-        <span style="font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--wwt-bright-red);">Outbound Progress</span>
-        <h1 style="margin: 0; font-size: 46px; font-weight: 900; line-height: 1.02; letter-spacing: -0.02em; color: var(--text);">{{ otPct }}% Full</h1>
-        <p style="margin: 0; font-size: 16px; color: var(--muted); max-width: 520px; line-height: 1.5;">{{ otDone }} Outbounded and {{ btsDone }} Sent BTS · {{ capacity }} of {{ activeTotal }} locations filled</p>
-      </div>
-      <div style="display: flex; flex-direction: column; gap: 8px; min-width: 380px; flex: 1; max-width: 520px;">
-        <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px;">
-          <span style="font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text);">Capacity</span>
-          <span style="font-family: var(--font-mono); font-size: 14px; font-weight: 500; color: var(--text);"><span style="font-weight: 700;">{{ capacity }}</span> / {{ activeTotal }} filled</span>
-        </div>
-        <div style="display: flex; height: 24px; border-radius: 4px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line);">
-          <sc-for list="{{ segs }}" as="sg" hint-placeholder-count="4">
-            <div sc-camel-on-mouse-enter="{{ sg.onEnter }}" sc-camel-on-mouse-leave="{{ onBarLeave }}" sc-camel-on-click="{{ sg.onClick }}" title="{{ sg.title }}" style="width: {{ sg.w }}; min-width: {{ sg.minW }}; background: {{ sg.color }}; cursor: pointer; position: relative; transition: filter 140ms, box-shadow 140ms;" style-hover="filter: brightness(1.15) saturate(1.15); box-shadow: inset 0 0 0 2px rgba(255,255,255,0.55), inset 0 -3px 0 rgba(0,0,0,0.14); z-index: 2;"></div>
-          </sc-for>
-        </div>
-        <div style="position: relative; min-height: 16px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; font-family: var(--font-mono); font-size: 11px; opacity: {{ barCapOpacity }}; transition: opacity 140ms;">
-            <span style="display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-weight: 500;">
-              <span style="width: 10px; height: 10px; border-radius: 2px; background: {{ barCap.color }};"></span>{{ barCap.label }}
-            </span>
-            <span style="color: var(--faint);">{{ barCap.value }}</span>
+    <!-- Headline: progress wheel + KPI cards -->
+    <div style="display: flex; align-items: stretch; justify-content: space-between; gap: 40px; flex-wrap: wrap; margin-bottom: 36px;">
+      <div style="display: flex; align-items: center; justify-content: center; gap: 28px; padding: 20px 28px; flex: 1; min-width: 380px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-sm);">
+        <div style="position: relative; width: 200px; height: 200px; flex-shrink: 0;">
+          <svg width="200" height="200" sc-camel-view-box="0 0 180 180" style="transform: rotate(-90deg);">
+            <circle cx="90" cy="90" r="78" fill="none" stroke="var(--line)" stroke-width="15"></circle>
+            <sc-for list="{{ ringSegs }}" as="rs" hint-placeholder-count="4">
+              <circle sc-camel-on-mouse-enter="{{ rs.onEnter }}" sc-camel-on-mouse-leave="{{ onBarLeave }}" sc-camel-on-click="{{ rs.onClick }}" cx="90" cy="90" r="78" fill="none" stroke="{{ rs.color }}" stroke-width="15" stroke-dasharray="{{ rs.dash }}" stroke-dashoffset="{{ rs.offset }}" style="cursor: pointer; transition: stroke-dasharray 600ms cubic-bezier(0.22,1,0.36,1), stroke-dashoffset 600ms cubic-bezier(0.22,1,0.36,1), stroke-width 140ms; pointer-events: stroke;" style-hover="stroke-width: 19;"></circle>
+            </sc-for>
+          </svg>
+          <div style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; pointer-events: none;">
+            <span style="font-size: 50px; font-weight: 900; line-height: 1; letter-spacing: -0.03em; color: {{ ringMainColor }};">{{ ringMain }}</span>
+            <span style="font-size: 12px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint);">{{ ringSub }}</span>
           </div>
-          <span style="position: absolute; top: 0; left: 0; font-family: var(--font-mono); font-size: 11px; color: var(--faint); opacity: {{ barHintOpacity }}; transition: opacity 140ms; pointer-events: none;">Status shown on mouse hover</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <span style="font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--wwt-bright-red);">Outbound Progress</span>
+          <h1 style="margin: 0; font-size: 34px; font-weight: 900; line-height: 1.05; letter-spacing: -0.02em; color: var(--text);">{{ capacity }} / {{ activeTotal }} filled</h1>
+          <p style="margin: 0; font-size: 15px; color: var(--muted); max-width: 420px; line-height: 1.5;">{{ otDone }} Outbounded and {{ btsDone }} Sent BTS</p>
         </div>
       </div>
-    </div>
-
-    <!-- KPI cards -->
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 36px;">
-      <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="6">
-        <div class="kpi-card" sc-camel-on-click="{{ k.onClick }}" style="{{ k.cardStyle }}" style-hover="transform: scale(1.03); box-shadow: var(--shadow-md);">
-          <button class="kpi-copy" sc-camel-on-click="{{ k.onCopyWos }}" title="{{ k.copyTitle }}"><svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>
-          <span style="font-size: {{ k.valueSize }}; font-weight: 900; line-height: 1; letter-spacing: -0.02em; color: {{ k.num }};">{{ k.value }}</span>
-          <span style="font-size: 12px; font-weight: 700; color: var(--text);">{{ k.label }}</span>
-          <span style="font-size: 11px; color: var(--faint);">{{ k.sub }}</span>
-        </div>
-      </sc-for>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; flex: 1; min-width: 360px; max-width: 560px;">
+        <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="6">
+          <div class="kpi-card" sc-camel-on-click="{{ k.onClick }}" style="{{ k.cardStyle }}" style-hover="transform: scale(1.03); box-shadow: var(--shadow-md);">
+            <button class="kpi-copy" sc-camel-on-click="{{ k.onCopyWos }}" title="{{ k.copyTitle }}"><svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button>
+            <span style="font-size: {{ k.valueSize }}; font-weight: 900; line-height: 1; letter-spacing: -0.02em; color: {{ k.num }};">{{ k.value }}</span>
+            <span style="font-size: 16px; font-weight: 700; color: var(--text);">{{ k.label }}</span>
+          </div>
+        </sc-for>
+      </div>
     </div>
 
     <!-- ============ TRACKER TAB ============ -->
