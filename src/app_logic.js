@@ -1177,7 +1177,9 @@ class Component extends DCLogic {
               if (!parts.length) { this._toast('Nothing to copy here', e); return; }
               this._copy(parts.join('\n'), e, 'Copied ' + names.join(' · '));
             },
-            style: `width:100%;aspect-ratio:1;border-radius:4px;cursor:pointer;position:relative;background:${m.color};box-shadow:${isSel?'0 0 0 2px var(--text)':border};opacity:${fade?0.25:1};transition:opacity 140ms,box-shadow 140ms,transform 140ms,filter 140ms;` };
+            // Issue/Hold squares carry the same caution-yellow stripes as the
+            // table row, laid over the status color.
+            style: `width:100%;aspect-ratio:1;border-radius:4px;cursor:pointer;position:relative;background-color:${m.color};${st === 'Issue/Hold' ? 'background-image:repeating-linear-gradient(45deg,rgba(242,169,0,0.95) 0 3px,transparent 3px 8px);' : ''}box-shadow:${isSel?'0 0 0 2px var(--text)':border};opacity:${fade?0.25:1};transition:opacity 140ms,box-shadow 140ms,transform 140ms,filter 140ms;` };
         }) };
     });
 
@@ -1283,6 +1285,10 @@ class Component extends DCLogic {
       const dnu = !!(this.META[st0] && this.META[st0].hazard);
       const dnuDim = dnu ? 'opacity:0.5;' : '';
       const dnuBarStr = dnu ? 'box-shadow: inset 4px 0 0 var(--wwt-bright-red);' : '';
+      // Issue/Hold rows get the same full-row treatment as "Do not use" — a
+      // caution-yellow stripe band plus an amber edge bar — but stay editable.
+      const issueRow = !dnu && st0 === 'Issue/Hold';
+      const issueBarStr = issueRow ? 'box-shadow: inset 4px 0 0 var(--accent-amber);' : '';
       const _ed = (this.state.editing || {})[r.ot];
       const selStyle = `appearance:auto;border:1px solid ${dark ? 'transparent' : 'var(--line-strong)'};border-radius:999px;padding:4px 8px;font-family:var(--font-sans);font-size:11px;font-weight:700;cursor:pointer;background:${dnu ? 'var(--wwt-bright-red)' : m.color};color:${dark ? '#fff' : 'var(--gray-600)'};`;
       const onSelect = () => this.setState({ sel: r });
@@ -1295,7 +1301,7 @@ class Component extends DCLogic {
         if (f.type === 'location' || f.type === 'zone') {
           return { key: f.key, isRead: true, text: val || '—', onSelect, onCopy, title: 'Right-click to copy',
             showTyping: primary && !!_ed, editingField: _ed ? this._fieldLabel(_ed.field) : '', editingLabel: _ed ? ('Someone is editing ' + this._fieldLabel(_ed.field)) : '',
-            tdStyle: `padding:11px 16px;font-family:var(--font-mono);font-weight:${primary ? '500' : '400'};color:${primary ? 'var(--text)' : 'var(--muted)'};${bdr}white-space:nowrap;cursor:pointer;${primary ? dnuBarStr : ''}` };
+            tdStyle: `padding:11px 16px;font-family:var(--font-mono);font-weight:${primary ? '500' : '400'};color:${primary ? 'var(--text)' : 'var(--muted)'};${bdr}white-space:nowrap;cursor:pointer;${primary ? (dnu ? dnuBarStr : issueBarStr) : ''}` };
         }
         if (f.type === 'status') {
           return { key: f.key, isStatus: true, statusVal: (r.status || '').trim(), onChange: (e) => this.updateField(r.ot, 'status', e.target.value), selStyle, onCopy, title: 'Right-click to copy', tdStyle: `padding:6px 10px;${bdr}` };
@@ -1336,6 +1342,8 @@ class Component extends DCLogic {
         onRestoreRow: () => this.restoreRow(r.ot),
         rowStyle: dnu
           ? `background-color:rgba(238,40,42,0.09);background-image:repeating-linear-gradient(45deg,rgba(238,40,42,0.16) 0 7px,transparent 7px 14px);transition:background 120ms;`
+          : issueRow
+          ? `background-color:rgba(242,169,0,0.10);background-image:repeating-linear-gradient(45deg,rgba(242,169,0,0.18) 0 7px,transparent 7px 14px);transition:background 120ms;`
           : `background:${isSel ? 'var(--sel-bg)' : (ri % 2 ? 'var(--surface-2)' : 'var(--surface)')};transition:background 120ms;` };
     });
 
