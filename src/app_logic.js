@@ -1034,7 +1034,7 @@ class Component extends DCLogic {
       ...this._adminUI() };
     if (!d) {
       return { ...base, total: '—', otPct: '—', otDone: '—', btsDone: '—', activeTotal: '—',
-        segs: [], barCap: { color: 'var(--accent-green)', label: 'Loading…', value: '' },
+        ringSegs: [], ringMain: '—', ringSub: 'Loading', ringMainColor: 'var(--text)',
         kpis: [], tabs: [], legend: [], racks: [], zoneOptions: [], columns: [], rows: [],
         showTracker: true, empty: false, resultCount: 0, query: '',
         sel: { headBg: 'var(--gray-100)', headFg: 'var(--gray-500)', kicker: 'Loading', otLoc: '…', fields: [] } };
@@ -1059,34 +1059,39 @@ class Component extends DCLogic {
     };
     const capacity = recs.filter(isFilled).length;
     const otPct = Math.round(capacity / activeTotal * 100);
-    const pctStr = (n) => (n / activeTotal * 100).toFixed(1) + '%';
-    const pctRound = (n) => Math.round(n / activeTotal * 100) + '%';
 
-    // progress bar segments (hover-explained)
+    // Progress wheel: one SVG arc per status (largest first), drawn with
+    // stroke-dasharray/-offset around a 78px-radius ring. Hovering an arc
+    // thickens it and swaps the center readout to that status; clicking
+    // filters (shift-click additive) — same interactions the old bar had.
     const segDefs = [
       { s: 'OT Completed', n: otDone },
       { s: 'BTS Completed', n: btsDone },
       { s: 'In Progress', n: prog },
       { s: 'Issue/Hold', n: issue },
     ];
-    const segs = segDefs.filter(x => x.n > 0).map(x => ({
-      color: this.META[x.s].color, w: pctStr(x.n), minW: '10px',
-      title: this.META[x.s].label + ' — ' + x.n + ' of ' + activeTotal + ' (' + pctRound(x.n) + ')',
-      onEnter: () => this.setState({ barHover: x.s }),
-      onClick: (e) => this._toggleStatus(x.s, !!(e && e.shiftKey)),
-    }));
-    let barCap;
+    const RING_CIRC = 2 * Math.PI * 78;
+    let ringAcc = 0;
+    const ringSegs = segDefs.filter(x => x.n > 0).sort((a, b) => b.n - a.n).map(x => {
+      const len = RING_CIRC * (x.n / activeTotal);
+      const seg = { color: this.META[x.s].color, dash: len.toFixed(2) + ' ' + (RING_CIRC - len).toFixed(2), offset: (-RING_CIRC * ringAcc).toFixed(2),
+        onEnter: () => this.setState({ barHover: x.s }),
+        onClick: (e) => this._toggleStatus(x.s, !!(e && e.shiftKey)) };
+      ringAcc += x.n / activeTotal;
+      return seg;
+    });
+    let ringMain, ringSub, ringMainColor;
     if (this.state.barHover) {
       const x = segDefs.find(y => y.s === this.state.barHover) || segDefs[0];
-      barCap = { color: this.META[x.s].color, label: this.META[x.s].label, value: x.n + ' / ' + activeTotal + ' · ' + pctRound(x.n) };
+      ringMain = String(x.n); ringSub = this.META[x.s].label; ringMainColor = this.META[x.s].color;
     } else {
-      barCap = { color: 'var(--accent-green)', label: 'OT complete', value: otDone + ' / ' + activeTotal };
+      ringMain = otPct + '%'; ringSub = 'Full'; ringMainColor = 'var(--text)';
     }
 
     // KPI cards = statuses flagged kpi:true in config (toggle in the admin
     // Statuses editor). Concise labels are kept for the core statuses; colors
     // and subtitles come from config so recoloring/relabeling flows through.
-    const KPI_LABEL = { 'OT Completed': 'Outbounded', 'BTS Completed': 'BTS', 'In Progress': 'In progress', 'Issue/Hold': 'Issue / Hold' };
+    const KPI_LABEL = { 'OT Completed': 'Outbounded', 'BTS Completed': 'Back To Stock', 'In Progress': 'In progress', 'Issue/Hold': 'Issue / Hold' };
     const kpiVal = { 'OT Completed': otDone, 'BTS Completed': btsDone, 'In Progress': prog, 'Issue/Hold': issue };
     const kpiDefs = this._statusList().filter(s => s.kpi && !s.reserved && !s.derived).map(s => {
       const lbl = KPI_LABEL[s.key] || s.label;
@@ -1098,7 +1103,7 @@ class Component extends DCLogic {
       const zero = k.value === 0;
       return { ...k,
         value: k.value,
-        valueSize: '30px',
+        valueSize: '40px',
         num: k.num,
         sup: '',
         onClick: (e) => {
@@ -1115,7 +1120,7 @@ class Component extends DCLogic {
           if (!wos.length) { this._toast('No work orders in ' + k.label, e); return; }
           this._copy(wos.join('\n'), e, 'Copied ' + wos.length + ' work order' + (wos.length > 1 ? 's' : ''));
         },
-        cardStyle: `background:var(--surface);border:1px solid var(--line);border-top:3px solid ${k.color};border-radius:6px;padding:16px 18px;box-shadow:${active?'var(--shadow-md)':'var(--shadow-sm)'};display:flex;flex-direction:column;gap:6px;cursor:pointer;transition:transform 140ms,box-shadow 140ms;`,
+        cardStyle: `background:var(--surface);border:1px solid var(--line);border-top:3px solid ${k.color};border-radius:6px;padding:22px 22px;box-shadow:${active?'var(--shadow-md)':'var(--shadow-sm)'};display:flex;flex-direction:column;gap:10px;cursor:pointer;transition:transform 140ms,box-shadow 140ms;`,
       };
     });
 
@@ -1361,7 +1366,7 @@ class Component extends DCLogic {
 
     return {
       ...base, total, otPct, otDone, btsDone, activeTotal, capacity,
-      segs, barCap, barCapOpacity: this.state.barHover ? 1 : 0, barHintOpacity: this.state.barHover ? 0 : 1,
+      ringSegs, ringMain, ringSub, ringMainColor,
       showNote: !!this.state.noteEdit,
       noteLoc: this.shortLoc(this.state.noteEdit),
       noteText: this.state.noteText,
