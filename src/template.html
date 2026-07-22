@@ -556,7 +556,6 @@
       <span style="font-weight: 900; font-size: 20px; letter-spacing: -0.02em; line-height: 1;">WWT</span>
       <span style="width: 1px; height: 20px; background: rgba(255,255,255,0.25);"></span>
       <span style="font-size: 15px; font-weight: 700; line-height: 1;">OT Tracker</span>
-      <span title="App version" style="font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; letter-spacing: 0.02em; line-height: 1; color: rgba(255,255,255,0.75); background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.18); border-radius: 999px; padding: 3px 8px;">{{ appVersion }}</span>
     </div>
     <div style="display: flex; align-items: center; gap: 14px; font-family: var(--font-mono); font-size: 12px; color: var(--gray-300);">
       <div style="display: flex; align-items: center; gap: 8px;">
@@ -569,7 +568,7 @@
       <span style="position: relative; display: inline-flex;">
         <button sc-camel-on-click="{{ infoBtn.onClick }}" title="About this tracker" style="display: inline-flex; align-items: center; justify-content: center; background: none; border: none; cursor: pointer; color: var(--gray-400); padding: 2px;" style-hover="color: #fff;"><svg width="17" height="17" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4M12 8h.01"></path></svg></button>
         <sc-if value="{{ infoOpen }}" hint-placeholder-val="{{ false }}">
-          <span style="position: absolute; top: 30px; right: 0; width: 260px; background: var(--wwt-black); color: var(--gray-300); border: 1px solid rgba(255,255,255,0.14); border-radius: 6px; padding: 13px 15px; font-family: var(--font-sans); font-size: 12px; line-height: 1.55; box-shadow: var(--shadow-lg); z-index: 30; text-align: left;">This tracker was made by <strong style="color: #fff; font-weight: 700;">Benjamin Cullum</strong>, hosted by <strong style="color: #fff; font-weight: 700;">Thomas Carnell</strong>. For any questions, please reach out to either support member.</span>
+          <span style="position: absolute; top: 30px; right: 0; width: 350px; background: var(--wwt-black); color: var(--gray-300); border: 1px solid rgba(255,255,255,0.14); border-radius: 6px; padding: 13px 15px; font-family: var(--font-sans); font-size: 12px; line-height: 1.55; box-shadow: var(--shadow-lg); z-index: 30; text-align: left;">This tracker was made by <strong style="color: #fff; font-weight: 700; white-space: nowrap;">Benjamin Cullum</strong>, hosted by <strong style="color: #fff; font-weight: 700; white-space: nowrap;">Thomas Carnell</strong>. For any questions, please reach out to either support member.</span>
         </sc-if>
       </span>
     </div>
