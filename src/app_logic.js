@@ -2,9 +2,6 @@
 class Component extends DCLogic {
   state = { data: null, tab: 'tracker', query: '', zoneFilter: 'all', statusFilter: 'all', sortKey: null, sortDir: 1, sel: null, dark: false, barHover: null, cleared: {}, clearedAt: {}, now: 0, confirmClear: null, scrolled: false, noteEdit: null, noteText: '', noDice: null, noteHover: null, datePicker: null, copied: null, admin: null, viewers: 1, live: 'connecting' };
 
-  // Version shown next to the header. Bump this on each release.
-  APP_VERSION = 'v4.0';
-
   componentDidMount() {
     const src = window.__OT_DATA ? Promise.resolve(window.__OT_DATA) : fetch('ot_data.json').then(r => r.json());
     Promise.resolve(this._initSupabase())
@@ -1015,7 +1012,7 @@ class Component extends DCLogic {
     const statusOptions = [{ value: '', label: 'Empty' }].concat(
       this._statusList().filter(s => !s.derived && !s.reserved)
         .map(s => ({ value: s.key, label: optLabel[s.key] || s.label })));
-    const base = { rootStyle, cellInput, cellDate, statusOptions, batchId: 'LY022426-23', zoneCount: 8, appVersion: this.APP_VERSION,
+    const base = { rootStyle, cellInput, cellDate, statusOptions, batchId: 'LY022426-23', zoneCount: 8,
       infoOpen: this.state.infoOpen,
       infoBtn: { onClick: () => this.setState(s => ({ infoOpen: !s.infoOpen })) },
       showCopied: !!this.state.copied,
