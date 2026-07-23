@@ -925,6 +925,33 @@
                 </sc-if>
               </div>
             </sc-for>
+
+            <!-- Danger zone: full sheet wipe (PIN confirm + 60s undo) -->
+            <div style="margin-top: 16px; border: 1.5px solid var(--wwt-bright-red-50); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1;">
+                  <span style="font-size: 11.5px; font-weight: 800; color: var(--wwt-red-deep); letter-spacing: 0.06em; text-transform: uppercase;">Danger zone</span>
+                  <span style="font-size: 12px; color: var(--muted); line-height: 1.5;">Wipe every location's entries. A safety backup is saved first, and you get 60 seconds to undo.</span>
+                </div>
+                <sc-if value="{{ adminWipeIdle }}" hint-placeholder-val="{{ false }}">
+                  <button sc-camel-on-click="{{ onAdminWipeStart }}" style="font-family: var(--font-sans); font-size: 12.5px; font-weight: 700; padding: 8px 14px; border-radius: 4px; border: 1.5px solid var(--wwt-bright-red); background: var(--surface); color: var(--wwt-red-deep); cursor: pointer; white-space: nowrap;" style-hover="background: var(--wwt-bright-red); color: #fff;">Wipe sheet…</button>
+                </sc-if>
+                <sc-if value="{{ adminWiped }}" hint-placeholder-val="{{ false }}">
+                  <button sc-camel-on-click="{{ onAdminWipeUndo }}" style="font-family: var(--font-sans); font-size: 12.5px; font-weight: 700; padding: 8px 14px; border-radius: 4px; border: none; background: var(--wwt-dark-blue); color: #fff; cursor: pointer; white-space: nowrap;" style-hover="background: var(--wwt-blue-deep);">↩ Restore everything · {{ adminWipeSecs }}s</button>
+                </sc-if>
+              </div>
+              <sc-if value="{{ adminWipeConfirming }}" hint-placeholder-val="{{ false }}">
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding-top: 4px; border-top: 1px solid var(--line-soft);">
+                  <span style="font-size: 12.5px; font-weight: 700; color: var(--text); white-space: nowrap;">Enter the wipe PIN to confirm:</span>
+                  <input type="password" inputmode="numeric" value="{{ adminWipePin }}" sc-camel-on-change="{{ onAdminWipePinInput }}" sc-camel-on-key-down="{{ onAdminWipePinKey }}" placeholder="PIN" style="width: 90px; height: 34px; padding: 0 10px; border: 1.5px solid var(--line-strong); border-radius: 4px; font-family: var(--font-mono); font-size: 14px; letter-spacing: 0.2em; color: var(--text); background: var(--surface); outline: none;" style-focus="border-color: var(--wwt-bright-red);">
+                  <button sc-camel-on-click="{{ onAdminWipeConfirm }}" style="font-family: var(--font-sans); font-size: 12.5px; font-weight: 700; padding: 8px 14px; border-radius: 4px; border: none; background: var(--wwt-bright-red); color: #fff; cursor: pointer; white-space: nowrap;" style-hover="background: var(--wwt-red-deep);">Wipe everything</button>
+                  <button sc-camel-on-click="{{ onAdminWipeCancel }}" style="font-family: var(--font-sans); font-size: 12.5px; font-weight: 700; padding: 8px 14px; border-radius: 4px; border: 1.5px solid var(--line-strong); background: var(--surface); color: var(--text); cursor: pointer; white-space: nowrap;">Cancel</button>
+                </div>
+              </sc-if>
+              <sc-if value="{{ adminWipeErr }}" hint-placeholder-val="{{ false }}">
+                <div style="padding: 9px 13px; border-radius: 4px; background: var(--wwt-bright-red-25); color: var(--wwt-red-deep); font-size: 12.5px; font-weight: 700; line-height: 1.45;">{{ adminWipeErr }}</div>
+              </sc-if>
+            </div>
           </div>
         </sc-if>
 

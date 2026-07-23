@@ -37,7 +37,7 @@ class Component extends DCLogic {
       const t = document.activeElement;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
       e.preventDefault();
-      this.setState(s => s.admin ? { admin: null } : { admin: { stage: 'pw', section: 'versions', pw: '', err: '', busy: false, label: '', versions: [], confirm: null, view: null, secNotice: '', secConfirm: null, newStatus: '', newStatusColor: '#3aa76d', newOt: '', newBts: '', newZone: '', locQuery: '', newFieldLabel: '', newFieldType: 'text', newFieldOptions: '' } });
+      this.setState(s => s.admin ? { admin: null } : { admin: { stage: 'pw', section: 'versions', pw: '', err: '', busy: false, label: '', versions: [], confirm: null, view: null, secNotice: '', secConfirm: null, newStatus: '', newStatusColor: '#3aa76d', newOt: '', newBts: '', newZone: '', locQuery: '', newFieldLabel: '', newFieldType: 'text', newFieldOptions: '', wipeStage: null, wipePin: '', wipeErr: '' } });
     };
     window.addEventListener('keydown', this._onKeyDown);
     // Automated versioning: check shortly after load, then every 30 minutes.
@@ -54,6 +54,8 @@ class Component extends DCLogic {
     clearInterval(this._resyncTimer);
     clearTimeout(this._backupSoonTimer);
     clearInterval(this._backupTimer);
+    clearTimeout(this._wipeTimer);
+    clearInterval(this._wipeTick);
   }
 
   // === Structure config (statuses / fields / locations) =================
@@ -495,6 +497,9 @@ class Component extends DCLogic {
   //   node -e "const pw='NEWPASSWORD';const f=(s,se,m)=>{let h=se>>>0;for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),m)>>>0;return('0000000'+h.toString(16)).slice(-8)};console.log(f(pw,0x811c9dc5,16777619)+f(pw,0x01000193,2166136261))"
   // and paste the output here. (Client-side gate — deters casual users, not attackers.)
   ADMIN_PW_HASH = '84919d347e05bb94';
+  // PIN required to confirm a full sheet wipe (same client-side _pwHash gate
+  // as the admin password — deters casual misclicks, not source readers).
+  WIPE_PIN_HASH = '5155797ed9ed2c48';
 
   _pwHash(s) {
     const fnv = (seed, mul) => { let h = seed >>> 0; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), mul) >>> 0; return ('0000000' + h.toString(16)).slice(-8); };
@@ -678,6 +683,91 @@ class Component extends DCLogic {
     await this._adminRefresh();
   }
 
+  // --- Full sheet wipe (admin danger zone) -------------------------------
+  // Clears every location's entries in one bulk write. Two safety nets: a
+  // "Pre-wipe safety copy" version is saved first, and the pre-wipe edits are
+  // kept in memory for a 60-second one-click undo.
+  async _adminWipe() {
+    const a = this.state.admin;
+    if (!a || a.busy) return;
+    if (this._pwHash((a.wipePin || '').trim()) !== this.WIPE_PIN_HASH) {
+      this._adminSet({ wipeErr: 'Wrong PIN — the sheet was not wiped.', wipePin: '' });
+      return;
+    }
+    this._adminSet({ busy: true, wipeErr: '' });
+    try {
+      const undo = JSON.parse(JSON.stringify(this._edits));
+      if (this._sb) await this._saveBackup('manual', 'Pre-wipe safety copy');
+      const ts = Date.now();
+      const iso = new Date(ts).toISOString();
+      const blank = {}; this._bkFields().forEach(f => { blank[f] = ''; });
+      const rows = [];
+      this._localWriteAt = this._localWriteAt || {};
+      ((this.state.data && this.state.data.records) || []).forEach(r => {
+        rows.push({ ot: r.ot, edits: { ...blank }, updated_at: iso });
+        this._localWriteAt[r.ot] = ts;
+      });
+      if (this._sb && rows.length) {
+        const { error } = await this._sb.from('ot_edits').upsert(rows, { onConflict: 'ot' });
+        if (error) throw error;
+      }
+      rows.forEach(r => { this._edits[r.ot] = r.edits; });
+      try { localStorage.setItem(this.LS_KEY, JSON.stringify(this._edits)); } catch (e) {}
+      this._wipeUndo = undo;
+      this.setState(s => {
+        const records = this._composeRecords();
+        const sel = s.sel ? (records.find(x => x.ot === s.sel.ot) || s.sel) : s.sel;
+        return { data: { records }, sel, wipedAt: ts, now: ts };
+      });
+      this._adminSet({ busy: false, wipeStage: null, wipePin: '' });
+      clearTimeout(this._wipeTimer);
+      this._wipeTimer = setTimeout(() => { this._wipeUndo = null; this.setState({ wipedAt: null }); }, 60000);
+      if (!this._wipeTick) this._wipeTick = setInterval(() => {
+        if (!this.state.wipedAt) { clearInterval(this._wipeTick); this._wipeTick = null; return; }
+        this.setState({ now: Date.now() });
+      }, 1000);
+    } catch (e) {
+      console.warn('Wipe failed.', e);
+      this._adminSet({ busy: false, wipeErr: 'Wipe failed — nothing was changed. Check the connection and try again.' });
+    }
+  }
+  async _adminWipeUndo() {
+    if (!this._wipeUndo) return;
+    const a = this.state.admin;
+    if (a && a.busy) return;
+    this._adminSet({ busy: true, wipeErr: '' });
+    try {
+      const snap = this._wipeUndo;
+      const ts = Date.now();
+      const iso = new Date(ts).toISOString();
+      const rows = [];
+      this._localWriteAt = this._localWriteAt || {};
+      // Every wiped row gets its pre-wipe edits back; rows that had no edits
+      // before the wipe go back to {} (i.e. the seed values show again).
+      Object.keys(this._edits).forEach(ot => {
+        rows.push({ ot, edits: snap[ot] || {}, updated_at: iso });
+        this._localWriteAt[ot] = ts;
+      });
+      if (this._sb && rows.length) {
+        const { error } = await this._sb.from('ot_edits').upsert(rows, { onConflict: 'ot' });
+        if (error) throw error;
+      }
+      rows.forEach(r => { this._edits[r.ot] = r.edits; });
+      try { localStorage.setItem(this.LS_KEY, JSON.stringify(this._edits)); } catch (e) {}
+      this._wipeUndo = null;
+      clearTimeout(this._wipeTimer);
+      this.setState(s => {
+        const records = this._composeRecords();
+        const sel = s.sel ? (records.find(x => x.ot === s.sel.ot) || s.sel) : s.sel;
+        return { data: { records }, sel, wipedAt: null };
+      });
+      this._adminSet({ busy: false });
+    } catch (e) {
+      console.warn('Wipe undo failed.', e);
+      this._adminSet({ busy: false, wipeErr: 'Restore failed — try again (the undo window is still open).' });
+    }
+  }
+
   _fmtWhen(iso) {
     if (!iso) return '—';
     const d = new Date(iso);
@@ -690,7 +780,7 @@ class Component extends DCLogic {
   _adminUI() {
     const a = this.state.admin;
     const btnBase = 'font-family:var(--font-sans);font-size:12px;font-weight:700;padding:6px 12px;border-radius:4px;cursor:pointer;white-space:nowrap;';
-    if (!a) return { showAdmin: false, adminPwStage: false, adminUnlocked: false, adminViewStage: false, adminSecVersions: false, adminSecStatuses: false, adminSecLocations: false, adminSecFields: false, adminNav: [], adminVersions: [], adminDiffs: [], adminStatuses: [], adminLocations: [], adminFields: [] };
+    if (!a) return { showAdmin: false, adminPwStage: false, adminUnlocked: false, adminViewStage: false, adminSecVersions: false, adminSecStatuses: false, adminSecLocations: false, adminSecFields: false, adminNav: [], adminVersions: [], adminDiffs: [], adminStatuses: [], adminLocations: [], adminFields: [], adminWipeIdle: false, adminWipeConfirming: false, adminWiped: false, adminWipeSecs: 0, adminWipePin: '', adminWipeErr: '' };
     const view = a.view;
     return {
       showAdmin: true,
@@ -712,6 +802,19 @@ class Component extends DCLogic {
       onAdminPwInput: (e) => this._adminSet({ pw: e.target.value, err: '' }),
       onAdminPwKey: (e) => { if (e.key === 'Enter') this._adminUnlock(); },
       onAdminUnlock: () => this._adminUnlock(),
+      // Danger zone: full sheet wipe (PIN-confirmed) + 60s undo countdown.
+      adminWiped: !!this.state.wipedAt,
+      adminWipeSecs: this.state.wipedAt ? Math.max(0, Math.ceil((60000 - (this.state.now - this.state.wipedAt)) / 1000)) : 0,
+      adminWipeConfirming: !this.state.wipedAt && a.wipeStage === 'confirm',
+      adminWipeIdle: !this.state.wipedAt && a.wipeStage !== 'confirm',
+      adminWipePin: a.wipePin || '',
+      adminWipeErr: a.wipeErr || '',
+      onAdminWipeStart: () => this._adminSet({ wipeStage: 'confirm', wipePin: '', wipeErr: '' }),
+      onAdminWipeCancel: () => this._adminSet({ wipeStage: null, wipePin: '', wipeErr: '' }),
+      onAdminWipeConfirm: () => this._adminWipe(),
+      onAdminWipeUndo: () => this._adminWipeUndo(),
+      onAdminWipePinInput: (e) => this._adminSet({ wipePin: e.target.value.replace(/\D/g, '').slice(0, 5), wipeErr: '' }),
+      onAdminWipePinKey: (e) => { if (e.key === 'Enter') this._adminWipe(); },
       adminLabel: a.label || '',
       onAdminLabelInput: (e) => this._adminSet({ label: e.target.value.slice(0, 60) }),
       onAdminLabelKey: (e) => { if (e.key === 'Enter') this._adminSave(); },
