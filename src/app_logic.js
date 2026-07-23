@@ -1220,7 +1220,18 @@ class Component extends DCLogic {
           if (!wos.length) { this._toast('No work orders in ' + k.label, e); return; }
           this._copy(wos.join('\n'), e, 'Copied ' + wos.length + ' work order' + (wos.length > 1 ? 's' : ''));
         },
-        cardStyle: `background:var(--surface);border:1px solid var(--line);border-top:3px solid ${k.color};border-radius:6px;padding:22px 22px;box-shadow:${active?'var(--shadow-md)':'var(--shadow-sm)'};display:flex;flex-direction:column;gap:10px;cursor:pointer;transition:transform 140ms,box-shadow 140ms;`,
+        // Hazard statuses swap the plain colored top border for a 6px striped
+        // band (same design as the rows/squares — lighter stripes on the
+        // darker base); 3px is too thin for the stripes to read.
+        cardStyle: (() => {
+          const hz = !!(this.META[k.status] && this.META[k.status].hazard);
+          const top = k.status === 'Issue/Hold'
+            ? `background-color:var(--surface);background-image:repeating-linear-gradient(45deg,rgba(255,255,255,0.45) 0 4px,transparent 4px 8px),linear-gradient(rgba(0,0,0,0.35),rgba(0,0,0,0.35)),linear-gradient(${k.color},${k.color});background-size:100% 6px;background-repeat:no-repeat;background-position:top;`
+            : hz
+            ? 'background-color:var(--surface);background-image:repeating-linear-gradient(45deg,rgba(138,145,155,0.85) 0 4px,transparent 4px 8px),linear-gradient(#16191d,#16191d);background-size:100% 6px;background-repeat:no-repeat;background-position:top;'
+            : `background:var(--surface);border-top:3px solid ${k.color};`;
+          return `${top}border-left:1px solid var(--line);border-right:1px solid var(--line);border-bottom:1px solid var(--line);${(k.status === 'Issue/Hold' || hz) ? 'border-top:1px solid var(--line);' : ''}border-radius:6px;padding:22px 22px;box-shadow:${active?'var(--shadow-md)':'var(--shadow-sm)'};display:flex;flex-direction:column;gap:10px;cursor:pointer;transition:transform 140ms,box-shadow 140ms;`;
+        })(),
       };
     });
 
