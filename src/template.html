@@ -627,7 +627,7 @@
             <div style="display: flex; gap: 8px; flex-wrap: wrap;">
               <sc-for list="{{ legend }}" as="lg" hint-placeholder-count="5">
                 <button sc-camel-on-click="{{ lg.onClick }}" style="{{ lg.style }}" style-hover="transform: scale(1.06); box-shadow: var(--shadow-sm);">
-                  <span style="width: 12px; height: 12px; border-radius: 3px; background: {{ lg.color }}; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12);"></span>
+                  <span style="{{ lg.swatchStyle }}"></span>
                   <span>{{ lg.label }}</span>
                   <span style="font-family: var(--font-mono); opacity: 0.6;">{{ lg.count }}</span>
                 </button>
@@ -644,7 +644,7 @@
                 </div>
                 <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px;">
                   <sc-for list="{{ rack.slots }}" as="slot" hint-placeholder-count="15">
-                    <div sc-camel-on-click="{{ slot.onSelect }}" sc-camel-on-context-menu="{{ slot.onCopy }}" title="{{ slot.title }}" style="{{ slot.style }}" style-hover="transform: scale(1.22); filter: brightness(1.08); z-index: 2;"></div>
+                    <div sc-camel-on-click="{{ slot.onSelect }}" sc-camel-on-context-menu="{{ slot.onCopy }}" title="{{ slot.title }}" style="{{ slot.style }}" style-hover="transform: scale(1.22); filter: brightness(1.08); z-index: 2;"><sc-if value="{{ slot.num }}" hint-placeholder-val="{{ true }}"><span style="{{ slot.numStyle }}">{{ slot.num }}</span></sc-if></div>
                   </sc-for>
                 </div>
               </div>
@@ -656,7 +656,7 @@
              height as the Location map card, with the field rows spread to
              fill it. -->
         <div style="background: var(--surface); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow-sm); overflow: hidden; display: flex; flex-direction: column;">
-          <div style="background: {{ sel.headBg }}; color: {{ sel.headFg }}; padding: 20px 22px;">
+          <div style="{{ sel.headStyle }}">
             <span style="font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.8;">{{ sel.kicker }}</span>
             <div style="font-size: 25px; font-weight: 900; letter-spacing: -0.01em; margin-top: 5px;">{{ sel.otLoc }}</div>
           </div>
@@ -862,7 +862,7 @@
 
         <div style="display: flex; align-items: center; justify-content: space-between; padding: 16px 22px; border-bottom: 1px solid var(--line-strong); background: var(--surface-2); flex-shrink: 0;">
           <div style="display: flex; align-items: center; gap: 11px;">
-            <span style="display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 999px; background: var(--wwt-blue-tint); flex-shrink: 0;"><svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="var(--wwt-dark-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></span>
+            <span style="display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 999px; background: var(--sel-bg); flex-shrink: 0;"><svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="var(--wwt-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg></span>
             <div style="display: flex; flex-direction: column; gap: 1px;">
               <span style="font-size: 16px; font-weight: 900; letter-spacing: -0.01em; color: var(--text);">Admin</span>
               <span style="font-size: 11px; color: var(--faint);">Versions, statuses, and locations</span>
@@ -925,6 +925,33 @@
                 </sc-if>
               </div>
             </sc-for>
+
+            <!-- Advisory: full sheet wipe (typed confirm + 60s undo) -->
+            <div style="margin-top: 16px; border: 1.5px solid var(--wwt-bright-red-50); border-radius: 6px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1;">
+                  <span style="font-size: 11.5px; font-weight: 800; color: var(--wwt-red-deep); letter-spacing: 0.06em; text-transform: uppercase;">Advisory</span>
+                  <span style="font-size: 12px; color: var(--muted); line-height: 1.5;">Wipe every location's entries. A safety backup is saved first, and you get 60 seconds to undo.</span>
+                </div>
+                <sc-if value="{{ adminWipeIdle }}" hint-placeholder-val="{{ false }}">
+                  <button sc-camel-on-click="{{ onAdminWipeStart }}" style="font-family: var(--font-sans); font-size: 12.5px; font-weight: 700; padding: 8px 14px; border-radius: 4px; border: 1.5px solid var(--wwt-bright-red); background: var(--surface); color: var(--wwt-red-deep); cursor: pointer; white-space: nowrap;" style-hover="background: var(--wwt-bright-red); color: #fff;">Wipe sheet…</button>
+                </sc-if>
+                <sc-if value="{{ adminWiped }}" hint-placeholder-val="{{ false }}">
+                  <button sc-camel-on-click="{{ onAdminWipeUndo }}" style="font-family: var(--font-sans); font-size: 12.5px; font-weight: 700; padding: 8px 14px; border-radius: 4px; border: none; background: var(--wwt-dark-blue); color: #fff; cursor: pointer; white-space: nowrap;" style-hover="background: var(--wwt-blue-deep);">↩ Restore everything · {{ adminWipeSecs }}s</button>
+                </sc-if>
+              </div>
+              <sc-if value="{{ adminWipeConfirming }}" hint-placeholder-val="{{ false }}">
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding-top: 4px; border-top: 1px solid var(--line-soft);">
+                  <span style="font-size: 12.5px; font-weight: 700; color: var(--text); white-space: nowrap;">Type <span style="font-family: var(--font-mono); color: var(--wwt-red-deep);">confirm</span> to proceed:</span>
+                  <input value="{{ adminWipePin }}" sc-camel-on-change="{{ onAdminWipePinInput }}" sc-camel-on-key-down="{{ onAdminWipePinKey }}" sc-camel-on-paste="{{ onAdminWipeNoPaste }}" sc-camel-on-drop="{{ onAdminWipeNoPaste }}" placeholder="confirm" autocomplete="off" style="width: 130px; height: 34px; padding: 0 10px; border: 1.5px solid var(--line-strong); border-radius: 4px; font-family: var(--font-mono); font-size: 13px; color: var(--text); background: var(--surface); outline: none;" style-focus="border-color: var(--wwt-bright-red);">
+                  <button sc-camel-on-click="{{ onAdminWipeConfirm }}" style="font-family: var(--font-sans); font-size: 12.5px; font-weight: 700; padding: 8px 14px; border-radius: 4px; border: none; background: var(--wwt-bright-red); color: #fff; cursor: pointer; white-space: nowrap;" style-hover="background: var(--wwt-red-deep);">Wipe everything</button>
+                  <button sc-camel-on-click="{{ onAdminWipeCancel }}" style="font-family: var(--font-sans); font-size: 12.5px; font-weight: 700; padding: 8px 14px; border-radius: 4px; border: 1.5px solid var(--line-strong); background: var(--surface); color: var(--text); cursor: pointer; white-space: nowrap;">Cancel</button>
+                </div>
+              </sc-if>
+              <sc-if value="{{ adminWipeErr }}" hint-placeholder-val="{{ false }}">
+                <div style="padding: 9px 13px; border-radius: 4px; background: var(--wwt-bright-red-25); color: var(--wwt-red-deep); font-size: 12.5px; font-weight: 700; line-height: 1.45;">{{ adminWipeErr }}</div>
+              </sc-if>
+            </div>
           </div>
         </sc-if>
 
