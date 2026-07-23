@@ -1034,7 +1034,7 @@ class Component extends DCLogic {
         ringSegs: [], ringMain: '—', ringSub: 'Loading', ringMainColor: 'var(--text)',
         kpis: [], tabs: [], legend: [], racks: [], zoneOptions: [], columns: [], rows: [],
         showTracker: true, empty: false, resultCount: 0, query: '',
-        sel: { headBg: 'var(--gray-100)', headFg: 'var(--gray-500)', kicker: 'Loading', otLoc: '…', fields: [] } };
+        sel: { headStyle: 'background-color:var(--gray-100);color:var(--gray-500);padding:20px 22px;', kicker: 'Loading', otLoc: '…', fields: [] } };
     }
     const allRecs = d.records;
     const recs = allRecs.filter(r => !r.obstructed);
@@ -1218,9 +1218,19 @@ class Component extends DCLogic {
 
     let sel;
     const sr = this.state.sel;
+    // The detail-card header carries the same hazard striping as the rows and
+    // map squares (lighter stripes on the darker base): light-red on dark-red
+    // for Issue/Hold, grey on black for "Do not use". Softer stripe alphas
+    // than the squares keep the white header text readable.
+    const selHead = (bg, img, fg) => `background-color:${bg};${img}color:${fg};padding:20px 22px;`;
     if (sr) {
       const m = this.metaFor(sr.status);
-      sel = { headBg: m.color, headFg: this.norm(sr.status)==='Pending' ? 'var(--wwt-ink)' : '#fff',
+      const st = this.norm(sr.status);
+      const hazardSel = !!(this.META[st] && this.META[st].hazard);
+      const headImg = st === 'Issue/Hold'
+        ? 'background-image:repeating-linear-gradient(45deg,rgba(255,255,255,0.28) 0 7px,transparent 7px 14px),linear-gradient(rgba(0,0,0,0.30),rgba(0,0,0,0.30));'
+        : hazardSel ? 'background-image:repeating-linear-gradient(45deg,rgba(138,145,155,0.45) 0 7px,transparent 7px 14px);' : '';
+      sel = { headStyle: selHead(hazardSel ? '#16191d' : m.color, headImg, st === 'Pending' ? 'var(--wwt-ink)' : '#fff'),
         kicker: m.label, otLoc: this.norm(sr.status) === 'OT Completed' ? sr.ot : sr.bts,
         fields: [
           { k: 'OT location', v: sr.ot || '—', mono: 'var(--font-mono)' },
@@ -1232,7 +1242,7 @@ class Component extends DCLogic {
           { k: 'Completed', v: sr.date || '—', mono: 'var(--font-mono)' },
         ] };
     } else {
-      sel = { headBg: 'var(--surface-2)', headFg: 'var(--muted)', kicker: 'No selection', otLoc: 'Pick a location', fields: [] };
+      sel = { headStyle: selHead('var(--surface-2)', '', 'var(--muted)'), kicker: 'No selection', otLoc: 'Pick a location', fields: [] };
     }
 
     const q = this.state.query.trim().toLowerCase();
