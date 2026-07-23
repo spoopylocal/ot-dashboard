@@ -500,7 +500,7 @@ class Component extends DCLogic {
   // Passphrase required to confirm a full sheet wipe (hash-stored, same
   // client-side _pwHash gate as the admin password — deters casual misclicks
   // and is long enough that the hash can't be brute-forced like a short PIN).
-  WIPE_PIN_HASH = '792f96cbad809439';
+  WIPE_PIN_HASH = 'dae5d03f458993bf';
 
   _pwHash(s) {
     const fnv = (seed, mul) => { let h = seed >>> 0; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), mul) >>> 0; return ('0000000' + h.toString(16)).slice(-8); };
