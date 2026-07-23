@@ -1177,7 +1177,11 @@ class Component extends DCLogic {
               if (!parts.length) { this._toast('Nothing to copy here', e); return; }
               this._copy(parts.join('\n'), e, 'Copied ' + names.join(' · '));
             },
-            style: `width:100%;aspect-ratio:1;border-radius:4px;cursor:pointer;position:relative;background:${m.color};box-shadow:${isSel?'0 0 0 2px var(--text)':border};opacity:${fade?0.25:1};transition:opacity 140ms,box-shadow 140ms,transform 140ms,filter 140ms;` };
+            // Striped squares mirror the table rows: Issue/Hold alternates
+            // dark-red/light-red bands (translucent black/white laid over the
+            // status red, so themed reds keep working), "Do not use" gets
+            // white stripes over its near-black — the barricade look.
+            style: `width:100%;aspect-ratio:1;border-radius:4px;cursor:pointer;position:relative;background-color:${m.color};${st === 'Issue/Hold' ? 'background-image:repeating-linear-gradient(45deg,rgba(0,0,0,0.34) 0 4px,rgba(255,255,255,0.30) 4px 8px);' : (m.hazard ? 'background-image:repeating-linear-gradient(45deg,rgba(255,255,255,0.85) 0 3px,transparent 3px 8px);' : '')}box-shadow:${isSel?'0 0 0 2px var(--text)':border};opacity:${fade?0.25:1};transition:opacity 140ms,box-shadow 140ms,transform 140ms,filter 140ms;` };
         }) };
     });
 
@@ -1282,9 +1286,16 @@ class Component extends DCLogic {
       const dark = st0 !== 'Pending';
       const dnu = !!(this.META[st0] && this.META[st0].hazard);
       const dnuDim = dnu ? 'opacity:0.5;' : '';
-      const dnuBarStr = dnu ? 'box-shadow: inset 4px 0 0 var(--wwt-bright-red);' : '';
+      // "Do not use" rows wear black-and-white barricade stripes (theme-aware:
+      // the black/white bands are laid translucently over the surface) with a
+      // text-colored edge bar; they stay locked as before.
+      const dnuBarStr = dnu ? 'box-shadow: inset 4px 0 0 var(--text);' : '';
+      // Issue/Hold rows get the red stripe band + red edge bar (the treatment
+      // "Do not use" used to have) but stay editable.
+      const issueRow = !dnu && st0 === 'Issue/Hold';
+      const issueBarStr = issueRow ? 'box-shadow: inset 4px 0 0 var(--wwt-bright-red);' : '';
       const _ed = (this.state.editing || {})[r.ot];
-      const selStyle = `appearance:auto;border:1px solid ${dark ? 'transparent' : 'var(--line-strong)'};border-radius:999px;padding:4px 8px;font-family:var(--font-sans);font-size:11px;font-weight:700;cursor:pointer;background:${dnu ? 'var(--wwt-bright-red)' : m.color};color:${dark ? '#fff' : 'var(--gray-600)'};`;
+      const selStyle = `appearance:auto;border:1px solid ${dark ? 'transparent' : 'var(--line-strong)'};border-radius:999px;padding:4px 8px;font-family:var(--font-sans);font-size:11px;font-weight:700;cursor:pointer;background:${m.color};color:${dark ? '#fff' : 'var(--gray-600)'};`;
       const onSelect = () => this.setState({ sel: r });
       // One cell per configured field, rendered by type in the template.
       const cells = fieldsList.map((f, ci) => {
@@ -1295,7 +1306,7 @@ class Component extends DCLogic {
         if (f.type === 'location' || f.type === 'zone') {
           return { key: f.key, isRead: true, text: val || '—', onSelect, onCopy, title: 'Right-click to copy',
             showTyping: primary && !!_ed, editingField: _ed ? this._fieldLabel(_ed.field) : '', editingLabel: _ed ? ('Someone is editing ' + this._fieldLabel(_ed.field)) : '',
-            tdStyle: `padding:11px 16px;font-family:var(--font-mono);font-weight:${primary ? '500' : '400'};color:${primary ? 'var(--text)' : 'var(--muted)'};${bdr}white-space:nowrap;cursor:pointer;${primary ? dnuBarStr : ''}` };
+            tdStyle: `padding:11px 16px;font-family:var(--font-mono);font-weight:${primary ? '500' : '400'};color:${primary ? 'var(--text)' : 'var(--muted)'};${bdr}white-space:nowrap;cursor:pointer;${primary ? (dnu ? dnuBarStr : issueBarStr) : ''}` };
         }
         if (f.type === 'status') {
           return { key: f.key, isStatus: true, statusVal: (r.status || '').trim(), onChange: (e) => this.updateField(r.ot, 'status', e.target.value), selStyle, onCopy, title: 'Right-click to copy', tdStyle: `padding:6px 10px;${bdr}` };
@@ -1335,6 +1346,8 @@ class Component extends DCLogic {
         restoreSecs: this.state.clearedAt[r.ot] ? Math.max(0, Math.ceil((60000 - (this.state.now - this.state.clearedAt[r.ot])) / 1000)) : 0,
         onRestoreRow: () => this.restoreRow(r.ot),
         rowStyle: dnu
+          ? `background-color:var(--surface-2);background-image:repeating-linear-gradient(45deg,rgba(0,0,0,0.30) 0 7px,rgba(255,255,255,0.30) 7px 14px);transition:background 120ms;`
+          : issueRow
           ? `background-color:rgba(238,40,42,0.09);background-image:repeating-linear-gradient(45deg,rgba(238,40,42,0.16) 0 7px,transparent 7px 14px);transition:background 120ms;`
           : `background:${isSel ? 'var(--sel-bg)' : (ri % 2 ? 'var(--surface-2)' : 'var(--surface)')};transition:background 120ms;` };
     });
