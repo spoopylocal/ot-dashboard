@@ -497,9 +497,10 @@ class Component extends DCLogic {
   //   node -e "const pw='NEWPASSWORD';const f=(s,se,m)=>{let h=se>>>0;for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),m)>>>0;return('0000000'+h.toString(16)).slice(-8)};console.log(f(pw,0x811c9dc5,16777619)+f(pw,0x01000193,2166136261))"
   // and paste the output here. (Client-side gate — deters casual users, not attackers.)
   ADMIN_PW_HASH = '84919d347e05bb94';
-  // PIN required to confirm a full sheet wipe (same client-side _pwHash gate
-  // as the admin password — deters casual misclicks, not source readers).
-  WIPE_PIN_HASH = '5155797ed9ed2c48';
+  // Passphrase required to confirm a full sheet wipe (hash-stored, same
+  // client-side _pwHash gate as the admin password — deters casual misclicks
+  // and is long enough that the hash can't be brute-forced like a short PIN).
+  WIPE_PIN_HASH = 'cdc324df59d3a7af';
 
   _pwHash(s) {
     const fnv = (seed, mul) => { let h = seed >>> 0; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), mul) >>> 0; return ('0000000' + h.toString(16)).slice(-8); };
@@ -691,7 +692,7 @@ class Component extends DCLogic {
     const a = this.state.admin;
     if (!a || a.busy) return;
     if (this._pwHash((a.wipePin || '').trim()) !== this.WIPE_PIN_HASH) {
-      this._adminSet({ wipeErr: 'Wrong PIN — the sheet was not wiped.', wipePin: '' });
+      this._adminSet({ wipeErr: 'Wrong passphrase — the sheet was not wiped.', wipePin: '' });
       return;
     }
     this._adminSet({ busy: true, wipeErr: '' });
@@ -813,7 +814,7 @@ class Component extends DCLogic {
       onAdminWipeCancel: () => this._adminSet({ wipeStage: null, wipePin: '', wipeErr: '' }),
       onAdminWipeConfirm: () => this._adminWipe(),
       onAdminWipeUndo: () => this._adminWipeUndo(),
-      onAdminWipePinInput: (e) => this._adminSet({ wipePin: e.target.value.replace(/\D/g, '').slice(0, 5), wipeErr: '' }),
+      onAdminWipePinInput: (e) => this._adminSet({ wipePin: e.target.value.slice(0, 64), wipeErr: '' }),
       onAdminWipePinKey: (e) => { if (e.key === 'Enter') this._adminWipe(); },
       adminLabel: a.label || '',
       onAdminLabelInput: (e) => this._adminSet({ label: e.target.value.slice(0, 60) }),
