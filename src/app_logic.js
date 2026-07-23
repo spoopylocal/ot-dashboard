@@ -155,6 +155,9 @@ class Component extends DCLogic {
   // CSS-var tokens; edited colors are stored as literal hex.
   COLOR_HEX = { 'var(--accent-green)': '#2E8B45', 'var(--wwt-light-blue)': '#0086EA', 'var(--accent-amber)': '#F2A900', 'var(--wwt-bright-red)': '#EE282A', 'var(--wwt-dark-blue-50)': '#7766B7', 'var(--gray-700)': '#2A2F36', 'var(--gray-200)': '#D6DAE0' };
   _hex(c) { if (!c) return '#888888'; if (c[0] === '#') return c; return this.COLOR_HEX[c] || '#888888'; }
+  // Pick a legible ink (dark or white) for text laid over a given hex fill,
+  // by perceived luminance. Used for the map squares' corner number badge.
+  _ink(hex) { const h = (this._hex(hex) || '').replace('#', ''); if (h.length !== 6) return '#fff'; const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16); return (0.299*r + 0.587*g + 0.114*b) > 150 ? '#1a1a1a' : '#fff'; }
 
   // --- Admin config mutations (statuses / locations) --------------------
   _cfgStatusColor(key, hex) { this._saveConfig({ statuses: this.cfg.statuses.map(s => s.key === key ? { ...s, color: hex } : s) }); }
@@ -1280,7 +1283,12 @@ class Component extends DCLogic {
           const fade = this.state.statusFilter !== 'all' && !this._statusInFilter(st);
           const border = st === 'Pending' ? 'inset 0 0 0 1px var(--line-strong)' : 'inset 0 0 0 1px rgba(0,0,0,0.10)';
           const primaryLoc = st === 'OT Completed' ? rec.ot : rec.bts;
+          // Always-on corner number: the in-zone slot (last two digits of the
+          // location code), inked for contrast against the square's fill.
+          const numInk = (m.hazard || st === 'Issue/Hold') ? '#fff' : this._ink(m.color);
           return { title: primaryLoc + ' · ' + m.label + ' · double-click to jump to row · right-click to copy WO/Serial/LPN',
+            num: this.shortLoc(rec.ot).slice(-2),
+            numStyle: `position:absolute;top:2px;left:4px;font-family:var(--font-mono);font-size:9px;font-weight:800;line-height:1;color:${numInk};opacity:0.92;pointer-events:none;`,
             onSelect: () => this.setState({ sel: rec }),
             onCopy: (e) => {
               if (e) e.preventDefault();

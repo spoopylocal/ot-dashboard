@@ -644,7 +644,7 @@
                 </div>
                 <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px;">
                   <sc-for list="{{ rack.slots }}" as="slot" hint-placeholder-count="15">
-                    <div sc-camel-on-click="{{ slot.onSelect }}" sc-camel-on-context-menu="{{ slot.onCopy }}" title="{{ slot.title }}" style="{{ slot.style }}" style-hover="transform: scale(1.22); filter: brightness(1.08); z-index: 2;"></div>
+                    <div sc-camel-on-click="{{ slot.onSelect }}" sc-camel-on-context-menu="{{ slot.onCopy }}" title="{{ slot.title }}" style="{{ slot.style }}" style-hover="transform: scale(1.22); filter: brightness(1.08); z-index: 2;"><sc-if value="{{ slot.num }}" hint-placeholder-val="{{ true }}"><span style="{{ slot.numStyle }}">{{ slot.num }}</span></sc-if></div>
                   </sc-for>
                 </div>
               </div>
