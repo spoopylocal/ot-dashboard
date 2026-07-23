@@ -627,7 +627,7 @@
             <div style="display: flex; gap: 8px; flex-wrap: wrap;">
               <sc-for list="{{ legend }}" as="lg" hint-placeholder-count="5">
                 <button sc-camel-on-click="{{ lg.onClick }}" style="{{ lg.style }}" style-hover="transform: scale(1.06); box-shadow: var(--shadow-sm);">
-                  <span style="width: 12px; height: 12px; border-radius: 3px; background: {{ lg.color }}; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12);"></span>
+                  <span style="{{ lg.swatchStyle }}"></span>
                   <span>{{ lg.label }}</span>
                   <span style="font-family: var(--font-mono); opacity: 0.6;">{{ lg.count }}</span>
                 </button>

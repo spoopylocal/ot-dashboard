@@ -1134,7 +1134,16 @@ class Component extends DCLogic {
     const legend = order.filter(s => countEff(s) > 0).map(s => {
       const active = this._statusInFilter(s);
       const dim = this.state.statusFilter !== 'all' && !active;
-      return { label: this.META[s].label, color: this.META[s].color, count: countEff(s),
+      // The swatch mirrors the hazard striping (lighter stripes on the darker
+      // base, scaled down to 12px): light-red on dark-red for Issue/Hold,
+      // grey on black for "Do not use"; every other status stays solid.
+      const swatchFill = s === 'Issue/Hold'
+        ? `background-color:${this.META[s].color};background-image:repeating-linear-gradient(45deg,rgba(255,255,255,0.45) 0 2.5px,transparent 2.5px 5px),linear-gradient(rgba(0,0,0,0.35),rgba(0,0,0,0.35));`
+        : (this.META[s].hazard
+          ? 'background-color:#16191d;background-image:repeating-linear-gradient(45deg,rgba(138,145,155,0.85) 0 2.5px,transparent 2.5px 5px);'
+          : `background:${this.META[s].color};`);
+      return { label: this.META[s].label, count: countEff(s),
+        swatchStyle: `width:12px;height:12px;border-radius:3px;${swatchFill}box-shadow:inset 0 0 0 1px rgba(0,0,0,0.12);`,
         onClick: (e) => this._toggleStatus(s, !!(e && e.shiftKey)),
         style: `display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-family:var(--font-sans);font-size:12px;font-weight:700;padding:6px 11px;border-radius:999px;border:1.5px solid ${active?'var(--text)':'var(--line)'};background:${active?'var(--surface-2)':'var(--surface)'};color:var(--text);opacity:${dim?0.4:1};transition:all 140ms;` };
     });
