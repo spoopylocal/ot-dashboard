@@ -1180,8 +1180,8 @@ class Component extends DCLogic {
             // Striped squares mirror the table rows: Issue/Hold alternates
             // dark-red/light-red bands (translucent black/white laid over the
             // status red, so themed reds keep working), "Do not use" gets
-            // black stripes on a grey base — the barricade look.
-            style: `width:100%;aspect-ratio:1;border-radius:4px;cursor:pointer;position:relative;background-color:${m.hazard ? 'var(--gray-400)' : m.color};${st === 'Issue/Hold' ? 'background-image:repeating-linear-gradient(45deg,rgba(0,0,0,0.34) 0 4px,rgba(255,255,255,0.30) 4px 8px);' : (m.hazard ? 'background-image:repeating-linear-gradient(45deg,rgba(0,0,0,0.72) 0 3px,transparent 3px 8px);' : '')}box-shadow:${isSel?'0 0 0 2px var(--text)':border};opacity:${fade?0.25:1};transition:opacity 140ms,box-shadow 140ms,transform 140ms,filter 140ms;` };
+            // grey stripes on a black base — the barricade look.
+            style: `width:100%;aspect-ratio:1;border-radius:4px;cursor:pointer;position:relative;background-color:${m.hazard ? '#16191d' : m.color};${st === 'Issue/Hold' ? 'background-image:repeating-linear-gradient(45deg,rgba(0,0,0,0.34) 0 4px,rgba(255,255,255,0.30) 4px 8px);' : (m.hazard ? 'background-image:repeating-linear-gradient(45deg,rgba(138,145,155,0.85) 0 3px,transparent 3px 8px);' : '')}box-shadow:${isSel?'0 0 0 2px var(--text)':border};opacity:${fade?0.25:1};transition:opacity 140ms,box-shadow 140ms,transform 140ms,filter 140ms;` };
         }) };
     });
 
