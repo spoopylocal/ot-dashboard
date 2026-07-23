@@ -801,7 +801,7 @@ class Component extends DCLogic {
       onAdminPwInput: (e) => this._adminSet({ pw: e.target.value, err: '' }),
       onAdminPwKey: (e) => { if (e.key === 'Enter') this._adminUnlock(); },
       onAdminUnlock: () => this._adminUnlock(),
-      // Danger zone: full sheet wipe (PIN-confirmed) + 60s undo countdown.
+      // Advisory (wipe) block: full sheet wipe (typed confirm) + 60s undo countdown.
       adminWiped: !!this.state.wipedAt,
       adminWipeSecs: this.state.wipedAt ? Math.max(0, Math.ceil((60000 - (this.state.now - this.state.wipedAt)) / 1000)) : 0,
       adminWipeConfirming: !this.state.wipedAt && a.wipeStage === 'confirm',
