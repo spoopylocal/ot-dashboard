@@ -37,7 +37,7 @@ class Component extends DCLogic {
       const t = document.activeElement;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
       e.preventDefault();
-      this.setState(s => s.admin ? { admin: null } : { admin: { stage: 'pw', section: 'versions', pw: '', err: '', busy: false, label: '', versions: [], confirm: null, view: null, secNotice: '', secConfirm: null, newStatus: '', newStatusColor: '#3aa76d', newOt: '', newBts: '', newZone: '', locQuery: '', newFieldLabel: '', newFieldType: 'text', newFieldOptions: '' } });
+      this.setState(s => s.admin ? { admin: null } : { admin: { stage: 'pw', section: 'versions', pw: '', err: '', busy: false, label: '', versions: [], confirm: null, view: null, secNotice: '', secConfirm: null, newStatus: '', newStatusColor: '#3aa76d', newOt: '', newBts: '', newZone: '', locQuery: '', newFieldLabel: '', newFieldType: 'text', newFieldOptions: '', wipeStage: null, wipePin: '', wipeErr: '' } });
     };
     window.addEventListener('keydown', this._onKeyDown);
     // Automated versioning: check shortly after load, then every 30 minutes.
@@ -54,6 +54,8 @@ class Component extends DCLogic {
     clearInterval(this._resyncTimer);
     clearTimeout(this._backupSoonTimer);
     clearInterval(this._backupTimer);
+    clearTimeout(this._wipeTimer);
+    clearInterval(this._wipeTick);
   }
 
   // === Structure config (statuses / fields / locations) =================
@@ -153,6 +155,9 @@ class Component extends DCLogic {
   // CSS-var tokens; edited colors are stored as literal hex.
   COLOR_HEX = { 'var(--accent-green)': '#2E8B45', 'var(--wwt-light-blue)': '#0086EA', 'var(--accent-amber)': '#F2A900', 'var(--wwt-bright-red)': '#EE282A', 'var(--wwt-dark-blue-50)': '#7766B7', 'var(--gray-700)': '#2A2F36', 'var(--gray-200)': '#D6DAE0' };
   _hex(c) { if (!c) return '#888888'; if (c[0] === '#') return c; return this.COLOR_HEX[c] || '#888888'; }
+  // Pick a legible ink (dark or white) for text laid over a given hex fill,
+  // by perceived luminance. Used for the map squares' corner number badge.
+  _ink(hex) { const h = (this._hex(hex) || '').replace('#', ''); if (h.length !== 6) return '#fff'; const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16); return (0.299*r + 0.587*g + 0.114*b) > 150 ? '#1a1a1a' : '#fff'; }
 
   // --- Admin config mutations (statuses / locations) --------------------
   _cfgStatusColor(key, hex) { this._saveConfig({ statuses: this.cfg.statuses.map(s => s.key === key ? { ...s, color: hex } : s) }); }
@@ -678,6 +683,93 @@ class Component extends DCLogic {
     await this._adminRefresh();
   }
 
+  // --- Full sheet wipe (admin danger zone) -------------------------------
+  // Clears every location's entries in one bulk write. Two safety nets: a
+  // "Pre-wipe safety copy" version is saved first, and the pre-wipe edits are
+  // kept in memory for a 60-second one-click undo.
+  async _adminWipe() {
+    const a = this.state.admin;
+    if (!a || a.busy) return;
+    // The word must be physically typed — the input blocks paste/drop — so a
+    // wipe always requires a deliberate, conscious action.
+    if ((a.wipePin || '').trim().toLowerCase() !== 'confirm') {
+      this._adminSet({ wipeErr: 'Type "confirm" exactly — the sheet was not wiped.', wipePin: '' });
+      return;
+    }
+    this._adminSet({ busy: true, wipeErr: '' });
+    try {
+      const undo = JSON.parse(JSON.stringify(this._edits));
+      if (this._sb) await this._saveBackup('manual', 'Pre-wipe safety copy');
+      const ts = Date.now();
+      const iso = new Date(ts).toISOString();
+      const blank = {}; this._bkFields().forEach(f => { blank[f] = ''; });
+      const rows = [];
+      this._localWriteAt = this._localWriteAt || {};
+      ((this.state.data && this.state.data.records) || []).forEach(r => {
+        rows.push({ ot: r.ot, edits: { ...blank }, updated_at: iso });
+        this._localWriteAt[r.ot] = ts;
+      });
+      if (this._sb && rows.length) {
+        const { error } = await this._sb.from('ot_edits').upsert(rows, { onConflict: 'ot' });
+        if (error) throw error;
+      }
+      rows.forEach(r => { this._edits[r.ot] = r.edits; });
+      try { localStorage.setItem(this.LS_KEY, JSON.stringify(this._edits)); } catch (e) {}
+      this._wipeUndo = undo;
+      this.setState(s => {
+        const records = this._composeRecords();
+        const sel = s.sel ? (records.find(x => x.ot === s.sel.ot) || s.sel) : s.sel;
+        return { data: { records }, sel, wipedAt: ts, now: ts };
+      });
+      this._adminSet({ busy: false, wipeStage: null, wipePin: '' });
+      clearTimeout(this._wipeTimer);
+      this._wipeTimer = setTimeout(() => { this._wipeUndo = null; this.setState({ wipedAt: null }); }, 60000);
+      if (!this._wipeTick) this._wipeTick = setInterval(() => {
+        if (!this.state.wipedAt) { clearInterval(this._wipeTick); this._wipeTick = null; return; }
+        this.setState({ now: Date.now() });
+      }, 1000);
+    } catch (e) {
+      console.warn('Wipe failed.', e);
+      this._adminSet({ busy: false, wipeErr: 'Wipe failed — nothing was changed. Check the connection and try again.' });
+    }
+  }
+  async _adminWipeUndo() {
+    if (!this._wipeUndo) return;
+    const a = this.state.admin;
+    if (a && a.busy) return;
+    this._adminSet({ busy: true, wipeErr: '' });
+    try {
+      const snap = this._wipeUndo;
+      const ts = Date.now();
+      const iso = new Date(ts).toISOString();
+      const rows = [];
+      this._localWriteAt = this._localWriteAt || {};
+      // Every wiped row gets its pre-wipe edits back; rows that had no edits
+      // before the wipe go back to {} (i.e. the seed values show again).
+      Object.keys(this._edits).forEach(ot => {
+        rows.push({ ot, edits: snap[ot] || {}, updated_at: iso });
+        this._localWriteAt[ot] = ts;
+      });
+      if (this._sb && rows.length) {
+        const { error } = await this._sb.from('ot_edits').upsert(rows, { onConflict: 'ot' });
+        if (error) throw error;
+      }
+      rows.forEach(r => { this._edits[r.ot] = r.edits; });
+      try { localStorage.setItem(this.LS_KEY, JSON.stringify(this._edits)); } catch (e) {}
+      this._wipeUndo = null;
+      clearTimeout(this._wipeTimer);
+      this.setState(s => {
+        const records = this._composeRecords();
+        const sel = s.sel ? (records.find(x => x.ot === s.sel.ot) || s.sel) : s.sel;
+        return { data: { records }, sel, wipedAt: null };
+      });
+      this._adminSet({ busy: false });
+    } catch (e) {
+      console.warn('Wipe undo failed.', e);
+      this._adminSet({ busy: false, wipeErr: 'Restore failed — try again (the undo window is still open).' });
+    }
+  }
+
   _fmtWhen(iso) {
     if (!iso) return '—';
     const d = new Date(iso);
@@ -690,7 +782,7 @@ class Component extends DCLogic {
   _adminUI() {
     const a = this.state.admin;
     const btnBase = 'font-family:var(--font-sans);font-size:12px;font-weight:700;padding:6px 12px;border-radius:4px;cursor:pointer;white-space:nowrap;';
-    if (!a) return { showAdmin: false, adminPwStage: false, adminUnlocked: false, adminViewStage: false, adminSecVersions: false, adminSecStatuses: false, adminSecLocations: false, adminSecFields: false, adminNav: [], adminVersions: [], adminDiffs: [], adminStatuses: [], adminLocations: [], adminFields: [] };
+    if (!a) return { showAdmin: false, adminPwStage: false, adminUnlocked: false, adminViewStage: false, adminSecVersions: false, adminSecStatuses: false, adminSecLocations: false, adminSecFields: false, adminNav: [], adminVersions: [], adminDiffs: [], adminStatuses: [], adminLocations: [], adminFields: [], adminWipeIdle: false, adminWipeConfirming: false, adminWiped: false, adminWipeSecs: 0, adminWipePin: '', adminWipeErr: '' };
     const view = a.view;
     return {
       showAdmin: true,
@@ -712,6 +804,20 @@ class Component extends DCLogic {
       onAdminPwInput: (e) => this._adminSet({ pw: e.target.value, err: '' }),
       onAdminPwKey: (e) => { if (e.key === 'Enter') this._adminUnlock(); },
       onAdminUnlock: () => this._adminUnlock(),
+      // Advisory (wipe) block: full sheet wipe (typed confirm) + 60s undo countdown.
+      adminWiped: !!this.state.wipedAt,
+      adminWipeSecs: this.state.wipedAt ? Math.max(0, Math.ceil((60000 - (this.state.now - this.state.wipedAt)) / 1000)) : 0,
+      adminWipeConfirming: !this.state.wipedAt && a.wipeStage === 'confirm',
+      adminWipeIdle: !this.state.wipedAt && a.wipeStage !== 'confirm',
+      adminWipePin: a.wipePin || '',
+      adminWipeErr: a.wipeErr || '',
+      onAdminWipeStart: () => this._adminSet({ wipeStage: 'confirm', wipePin: '', wipeErr: '' }),
+      onAdminWipeCancel: () => this._adminSet({ wipeStage: null, wipePin: '', wipeErr: '' }),
+      onAdminWipeConfirm: () => this._adminWipe(),
+      onAdminWipeUndo: () => this._adminWipeUndo(),
+      onAdminWipePinInput: (e) => this._adminSet({ wipePin: e.target.value.slice(0, 64), wipeErr: '' }),
+      onAdminWipePinKey: (e) => { if (e.key === 'Enter') this._adminWipe(); },
+      onAdminWipeNoPaste: (e) => { e.preventDefault(); },
       adminLabel: a.label || '',
       onAdminLabelInput: (e) => this._adminSet({ label: e.target.value.slice(0, 60) }),
       onAdminLabelKey: (e) => { if (e.key === 'Enter') this._adminSave(); },
@@ -1034,7 +1140,7 @@ class Component extends DCLogic {
         ringSegs: [], ringMain: '—', ringSub: 'Loading', ringMainColor: 'var(--text)',
         kpis: [], tabs: [], legend: [], racks: [], zoneOptions: [], columns: [], rows: [],
         showTracker: true, empty: false, resultCount: 0, query: '',
-        sel: { headBg: 'var(--gray-100)', headFg: 'var(--gray-500)', kicker: 'Loading', otLoc: '…', fields: [] } };
+        sel: { headStyle: 'background-color:var(--gray-100);color:var(--gray-500);padding:20px 22px;', kicker: 'Loading', otLoc: '…', fields: [] } };
     }
     const allRecs = d.records;
     const recs = allRecs.filter(r => !r.obstructed);
@@ -1134,7 +1240,16 @@ class Component extends DCLogic {
     const legend = order.filter(s => countEff(s) > 0).map(s => {
       const active = this._statusInFilter(s);
       const dim = this.state.statusFilter !== 'all' && !active;
-      return { label: this.META[s].label, color: this.META[s].color, count: countEff(s),
+      // The swatch mirrors the hazard striping (lighter stripes on the darker
+      // base, scaled down to 12px): light-red on dark-red for Issue/Hold,
+      // grey on black for "Do not use"; every other status stays solid.
+      const swatchFill = s === 'Issue/Hold'
+        ? `background-color:${this.META[s].color};background-image:repeating-linear-gradient(45deg,rgba(255,255,255,0.45) 0 2.5px,transparent 2.5px 5px),linear-gradient(rgba(0,0,0,0.35),rgba(0,0,0,0.35));`
+        : (this.META[s].hazard
+          ? 'background-color:#16191d;background-image:repeating-linear-gradient(45deg,rgba(138,145,155,0.85) 0 2.5px,transparent 2.5px 5px);'
+          : `background:${this.META[s].color};`);
+      return { label: this.META[s].label, count: countEff(s),
+        swatchStyle: `width:12px;height:12px;border-radius:3px;${swatchFill}box-shadow:inset 0 0 0 1px rgba(0,0,0,0.12);`,
         onClick: (e) => this._toggleStatus(s, !!(e && e.shiftKey)),
         style: `display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-family:var(--font-sans);font-size:12px;font-weight:700;padding:6px 11px;border-radius:999px;border:1.5px solid ${active?'var(--text)':'var(--line)'};background:${active?'var(--surface-2)':'var(--surface)'};color:var(--text);opacity:${dim?0.4:1};transition:all 140ms;` };
     });
@@ -1168,7 +1283,12 @@ class Component extends DCLogic {
           const fade = this.state.statusFilter !== 'all' && !this._statusInFilter(st);
           const border = st === 'Pending' ? 'inset 0 0 0 1px var(--line-strong)' : 'inset 0 0 0 1px rgba(0,0,0,0.10)';
           const primaryLoc = st === 'OT Completed' ? rec.ot : rec.bts;
+          // Always-on corner number: the in-zone slot (last two digits of the
+          // location code), inked for contrast against the square's fill.
+          const numInk = (m.hazard || st === 'Issue/Hold') ? '#fff' : this._ink(m.color);
           return { title: primaryLoc + ' · ' + m.label + ' · double-click to jump to row · right-click to copy WO/Serial/LPN',
+            num: this.shortLoc(rec.ot).slice(-2),
+            numStyle: `position:absolute;top:2px;left:4px;font-family:var(--font-mono);font-size:9px;font-weight:800;line-height:1;color:${numInk};opacity:0.92;pointer-events:none;`,
             onSelect: () => this.setState({ sel: rec }),
             onCopy: (e) => {
               if (e) e.preventDefault();
@@ -1218,9 +1338,19 @@ class Component extends DCLogic {
 
     let sel;
     const sr = this.state.sel;
+    // The detail-card header carries the same hazard striping as the rows and
+    // map squares (lighter stripes on the darker base): light-red on dark-red
+    // for Issue/Hold, grey on black for "Do not use". Softer stripe alphas
+    // than the squares keep the white header text readable.
+    const selHead = (bg, img, fg) => `background-color:${bg};${img}color:${fg};padding:20px 22px;`;
     if (sr) {
       const m = this.metaFor(sr.status);
-      sel = { headBg: m.color, headFg: this.norm(sr.status)==='Pending' ? 'var(--wwt-ink)' : '#fff',
+      const st = this.norm(sr.status);
+      const hazardSel = !!(this.META[st] && this.META[st].hazard);
+      const headImg = st === 'Issue/Hold'
+        ? 'background-image:repeating-linear-gradient(45deg,rgba(255,255,255,0.28) 0 7px,transparent 7px 14px),linear-gradient(rgba(0,0,0,0.30),rgba(0,0,0,0.30));'
+        : hazardSel ? 'background-image:repeating-linear-gradient(45deg,rgba(138,145,155,0.45) 0 7px,transparent 7px 14px);' : '';
+      sel = { headStyle: selHead(hazardSel ? '#16191d' : m.color, headImg, st === 'Pending' ? 'var(--wwt-ink)' : '#fff'),
         kicker: m.label, otLoc: this.norm(sr.status) === 'OT Completed' ? sr.ot : sr.bts,
         fields: [
           { k: 'OT location', v: sr.ot || '—', mono: 'var(--font-mono)' },
@@ -1232,7 +1362,7 @@ class Component extends DCLogic {
           { k: 'Completed', v: sr.date || '—', mono: 'var(--font-mono)' },
         ] };
     } else {
-      sel = { headBg: 'var(--surface-2)', headFg: 'var(--muted)', kicker: 'No selection', otLoc: 'Pick a location', fields: [] };
+      sel = { headStyle: selHead('var(--surface-2)', '', 'var(--muted)'), kicker: 'No selection', otLoc: 'Pick a location', fields: [] };
     }
 
     const q = this.state.query.trim().toLowerCase();
