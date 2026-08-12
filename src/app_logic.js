@@ -23,7 +23,7 @@ class Component extends DCLogic {
     window.addEventListener('focus', this._onFocus);
     this._onOnline = () => this._resync('online');
     window.addEventListener('online', this._onOnline);
-    this._resyncTimer = setInterval(() => { if (!document.hidden) this._resync('poll'); }, 45000);
+    this._resyncTimer = setInterval(() => { if (!document.hidden) this._resync('poll'); }, this._pollMs());
     this._onScroll = () => {
       const y = window.scrollY || document.documentElement.scrollTop || 0;
       const show = y > 400;
@@ -255,8 +255,30 @@ class Component extends DCLogic {
   // === Shared live backend (Supabase) ===================================
   // The anon key is meant to be public in client code; access is limited by
   // Row Level Security policies on the ot_edits table.
-  SB_URL = 'https://ufsszfghfbgclrtlzknf.supabase.co';
+  // The project's own hostname. Used directly for local work; on a deployed
+  // origin we go through the same-origin /sb proxy instead (see below).
+  SB_DIRECT = 'https://ufsszfghfbgclrtlzknf.supabase.co';
   SB_KEY = 'sb_publishable_RdP1sAi9b6N1VbFHsJZLbw_yhcJmjRZ';
+  // Corporate DNS filtering (Cisco Umbrella) intercepts the Supabase hostname
+  // on the warehouse network and answers CORS preflights with a 303 to http://,
+  // which browsers refuse — every client lost the database and fell back to
+  // localStorage, so nobody saw anyone else's edits. Talking to our own origin
+  // avoids both the filtered hostname and the preflight; netlify.toml forwards
+  // /sb to Supabase server-side. Localhost/file:// keep the direct URL so local
+  // preview still works without a proxy in front of it.
+  get SB_URL() {
+    try {
+      const h = location.hostname;
+      if (location.protocol !== 'http:' && location.protocol !== 'https:') return this.SB_DIRECT;
+      if (h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '') return this.SB_DIRECT;
+      return location.origin + '/sb';
+    } catch (e) { return this.SB_DIRECT; }
+  }
+  _viaProxy() { return this.SB_URL !== this.SB_DIRECT; }
+  // Realtime can't be proxied (no WebSocket upgrade through Netlify), so while
+  // we're on the proxy the REST poll is the only channel that catches other
+  // people's edits — run it more often to keep the lag down.
+  _pollMs() { return this._viaProxy() ? 15000 : 45000; }
   // ======================================================================
 
   _sbConfigured() { return this.SB_URL.indexOf('YOUR-PROJECT') === -1; }
@@ -1131,8 +1153,12 @@ class Component extends DCLogic {
       viewerCount: this.state.viewers,
       viewerEyeColor: this.state.live === 'live' ? '#4ade80' : (this.state.live === 'reconnecting' ? '#F2A900' : '#8A919B'),
       viewerTitle: (this.state.viewers === 1 ? 'You are the only person viewing this tracker' : this.state.viewers + ' people are viewing this tracker right now')
-        + (this.state.live === 'live' ? '' : this.state.live === 'reconnecting'
-            ? ' · Reconnecting to live updates (still syncing every 45s)'
+        + (this.state.live === 'live' ? ''
+            // Behind the same-origin proxy live push can't connect by design,
+            // so say what's actually happening instead of "reconnecting…".
+            : this._viaProxy() ? ' · Live push unavailable on this network — syncing every ' + Math.round(this._pollMs() / 1000) + 's'
+            : this.state.live === 'reconnecting'
+            ? ' · Reconnecting to live updates (still syncing every ' + Math.round(this._pollMs() / 1000) + 's)'
             : ' · Live sync offline — showing last synced data'),
       ...this._adminUI() };
     if (!d) {
