@@ -58,6 +58,7 @@ let out = shell.slice(0, bodyStart) + encoded + shell.slice(bodyEnd);
 // running JS, so the tags must live in the served HTML head — injected here
 // on every build so they survive shell replacements. Edit SITE_URL if the
 // deployed address changes.
+// deployed address changes.
 const SITE_URL = 'https://ot-dashboard.netlify.app';
 const META = `
   <title>WWT OT Tracker</title>
