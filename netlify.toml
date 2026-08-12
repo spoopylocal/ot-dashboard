@@ -1,0 +1,32 @@
+# Netlify configuration for the WWT OT Tracker.
+#
+# Why the /sb proxy exists
+# ------------------------
+# The tracker talks to Supabase straight from the browser. On the warehouse
+# network, Cisco Umbrella intercepts the Supabase hostname and answers the CORS
+# preflight with "303 See Other" pointing at http:// — browsers reject a
+# redirect on a preflight, so every request failed (net::ERR_FAILED) and each
+# client silently fell back to localStorage-only. That looked like "everyone is
+# out of sync" because nobody was reaching the shared database at all.
+#
+# Routing the API through our own origin sidesteps it: the browser only ever
+# talks to this Netlify site (which the filter allows), and Netlify's servers
+# make the Supabase call from outside the corporate network. Same-origin also
+# means there is no CORS preflight left to intercept.
+#
+# Note: Netlify proxies do not carry WebSocket upgrades, so Supabase realtime
+# stays unavailable behind this proxy. The app already handles that — it falls
+# back to REST resync on focus/visibility/online plus a timed poll (shortened
+# while proxying, see _pollMs in src/app_logic.js).
+
+[build]
+  publish = "."
+
+# Anything under /sb is forwarded to the Supabase project, preserving the rest
+# of the path and the query string. status = 200 makes this a server-side proxy
+# rather than a browser redirect, which is what keeps it same-origin.
+[[redirects]]
+  from = "/sb/*"
+  to = "https://ufsszfghfbgclrtlzknf.supabase.co/:splat"
+  status = 200
+  force = true
