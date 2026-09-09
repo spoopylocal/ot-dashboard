@@ -1,6 +1,6 @@
 
 class Component extends DCLogic {
-  state = { data: null, tab: 'tracker', query: '', zoneFilter: 'all', statusFilter: 'all', sortKey: null, sortDir: 1, sel: null, dark: false, barHover: null, cleared: {}, clearedAt: {}, now: 0, confirmClear: null, scrolled: false, noteEdit: null, noteText: '', noDice: null, noteHover: null, datePicker: null, copied: null, admin: null, viewers: 1, live: 'connecting' };
+  state = { data: null, tab: 'tracker', query: '', zoneFilter: 'all', statusFilter: 'all', sortKey: null, sortDir: 1, sel: null, dark: false, barHover: null, cleared: {}, clearedAt: {}, now: 0, confirmClear: null, scrolled: false, noteEdit: null, noteText: '', noDice: null, noteHover: null, datePicker: null, copied: null, admin: null, viewers: 1, live: 'connecting', saveStatus: '' };
 
   componentDidMount() {
     const src = window.__OT_DATA ? Promise.resolve(window.__OT_DATA) : fetch('ot_data.json').then(r => r.json());
@@ -23,7 +23,13 @@ class Component extends DCLogic {
     window.addEventListener('focus', this._onFocus);
     this._onOnline = () => this._resync('online');
     window.addEventListener('online', this._onOnline);
-    this._resyncTimer = setInterval(() => { if (!document.hidden) this._resync('poll'); }, this._pollMs());
+    this._onBeforeUnload = e => {
+      if (!Object.keys(this._dirty || {}).length) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', this._onBeforeUnload);
+    this._schedulePoll();
     this._onScroll = () => {
       const y = window.scrollY || document.documentElement.scrollTop || 0;
       const show = y > 400;
@@ -46,11 +52,18 @@ class Component extends DCLogic {
     this._backupTimer = setInterval(() => this._autoBackupCheck(), 30 * 60 * 1000);
   }
   componentWillUnmount() {
+    this._disposed = true;
+    Object.values(this._saveTimers || {}).forEach(clearTimeout);
+    Object.values(this._retryTimers || {}).forEach(clearTimeout);
+    if (this._sbChannel) this._sb.removeChannel(this._sbChannel);
+    if (this._presence) this._sb.removeChannel(this._presence);
+    clearInterval(this._expireTimer);
     if (this._onScroll) window.removeEventListener('scroll', this._onScroll);
     if (this._onKeyDown) window.removeEventListener('keydown', this._onKeyDown);
     if (this._onVisible) document.removeEventListener('visibilitychange', this._onVisible);
     if (this._onFocus) window.removeEventListener('focus', this._onFocus);
     if (this._onOnline) window.removeEventListener('online', this._onOnline);
+    if (this._onBeforeUnload) window.removeEventListener('beforeunload', this._onBeforeUnload);
     clearInterval(this._resyncTimer);
     clearTimeout(this._backupSoonTimer);
     clearInterval(this._backupTimer);
@@ -278,7 +291,7 @@ class Component extends DCLogic {
   // Realtime can't be proxied (no WebSocket upgrade through Netlify), so while
   // we're on the proxy the REST poll is the only channel that catches other
   // people's edits — run it more often to keep the lag down.
-  _pollMs() { return this._viaProxy() ? 15000 : 45000; }
+  _pollMs() { return this._viaProxy() ? 3000 : 45000; }
   // ======================================================================
 
   _sbConfigured() { return this.SB_URL.indexOf('YOUR-PROJECT') === -1; }
@@ -301,13 +314,14 @@ class Component extends DCLogic {
   async _fetchEdits() {
     if (this._sb) {
       try {
-        const { data, error } = await this._sb.from('ot_edits').select('ot,edits');
+        const { data, error } = await this._sb.from('ot_edits').select('ot,edits').or('ot.not.like.\\_\\_*,ot.eq.' + this.CFG_KEY);
         if (error) throw error;
         const map = {};
         // Rows keyed "__..." are meta rows (version backups, connection tests),
         // not locations — keep them out of the edits map.
         (data || []).forEach(row => { if ((row.ot || '').indexOf('__') !== 0) map[row.ot] = row.edits || {}; });
         this._edits = map;
+        if (this._viaProxy()) this._setLive('synced');
         return map;
       } catch (e) { console.warn('Supabase read failed; falling back to local storage.', e); }
     }
@@ -316,7 +330,7 @@ class Component extends DCLogic {
   }
 
   _subscribeLive() {
-    if (!this._sb || this._sbChannel) return;
+    if (!this._sb || this._viaProxy() || this._sbChannel) return;
     this._sbChannel = this._sb
       .channel('ot_edits_live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ot_edits' }, payload => {
@@ -358,17 +372,31 @@ class Component extends DCLogic {
       });
   }
 
+  _schedulePoll() {
+    clearTimeout(this._resyncTimer);
+    if (this._disposed) return;
+    const delay = Math.min(60000, this._pollMs() * Math.pow(2, this._pollFailures || 0));
+    this._resyncTimer = setTimeout(async () => {
+      if (!document.hidden) await this._resync('poll');
+      this._schedulePoll();
+    }, delay);
+  }
   _setLive(s) { if (s !== this.state.live) this.setState({ live: s }); }
 
   // Reconcile local state with the datastore over REST (which stays reachable
   // even when the realtime WebSocket is blocked). Safe to call often: it never
   // clobbers an edit we applied more recently or one the user is still typing.
   async _resync(reason) {
-    if (!this._sb || this._resyncing) return;
+    if (!this._sb || this._resyncing || (this.state.admin && this.state.admin.busy)) return;
     this._resyncing = true;
+    // Ignore responses that started before a local write completed.
+    const readGeneration = this._writeGeneration || 0;
     try {
-      const { data, error } = await this._sb.from('ot_edits').select('ot,edits');
+      const { data, error } = await this._sb.from('ot_edits').select('ot,edits').or('ot.not.like.\\_\\_*,ot.eq.' + this.CFG_KEY);
       if (error) throw error;
+      if (this._disposed || (this.state.admin && this.state.admin.busy) || readGeneration !== (this._writeGeneration || 0)) return;
+      this._pollFailures = 0;
+      if (this._viaProxy()) this._setLive('synced');
       const pending = this._saveTimers || {};
       const next = {};
       let cfgRow = null;
@@ -376,8 +404,8 @@ class Component extends DCLogic {
         const ot = row.ot || '';
         if (ot === this.CFG_KEY) { cfgRow = row.edits || {}; return; }
         if (ot.indexOf('__') === 0) return;
-        // Keep our local value only while the user is mid-edit here or we wrote
-        // this row seconds ago (the save may still be in flight). Otherwise the
+        // Keep our local value while the user is mid-edit or awaiting a save
+        // acknowledgment, including retries. Otherwise the
         // datastore is the source of truth — no timestamp comparison: row
         // timestamps come from other machines' clocks, and trusting them made a
         // client with a fast clock ignore every slower writer until a reload.
@@ -393,8 +421,12 @@ class Component extends DCLogic {
         if (ot.indexOf('__') === 0) return;
         if (next[ot] === undefined && (pending[ot] || this._recentWrite(ot))) next[ot] = this._edits[ot];
       });
+      const keys = new Set([...Object.keys(next), ...Object.keys(this._edits)]);
+      const editsChanged = [...keys].some(ot => !(ot in next) || !(ot in this._edits) || !this._sameEdits(next[ot], this._edits[ot]));
+      const configChanged = !!cfgRow && this._stableJson(cfgRow) !== this._lastConfigJson;
+      if (!editsChanged && !configChanged) return;
       this._edits = next;
-      if (cfgRow) this._applyConfig(cfgRow);
+      if (cfgRow) { this._applyConfig(cfgRow); this._lastConfigJson = this._stableJson(cfgRow); }
       this.setState(s => {
         if (!s.data) return {};
         const records = this._composeRecords();
@@ -402,17 +434,22 @@ class Component extends DCLogic {
         return { data: { records }, sel };
       });
       try { localStorage.setItem(this.LS_KEY, JSON.stringify(this._edits)); } catch (e) {}
-    } catch (e) { console.warn('Resync failed (' + reason + ').', e); }
+    } catch (e) { this._pollFailures = Math.min(5, (this._pollFailures || 0) + 1); this._setLive('offline'); console.warn('Resync failed (' + reason + ').', e); }
     finally { this._resyncing = false; }
   }
 
   loadEdits() { return this._edits; }
 
-  // How long a local write protects its row from being overwritten by realtime
-  // events or a resync. Long enough to cover an in-flight upsert and its echo;
-  // short enough that another client's genuine change lands by the next resync.
-  RECENT_WRITE_MS = 5000;
-  _recentWrite(ot) { return !!(this._localWriteAt && this._localWriteAt[ot] && Date.now() - this._localWriteAt[ot] < this.RECENT_WRITE_MS); }
+  _stableJson(value) {
+    if (Array.isArray(value)) return '[' + value.map(v => this._stableJson(v)).join(',') + ']';
+    if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(k => JSON.stringify(k) + ':' + this._stableJson(value[k])).join(',') + '}';
+    return JSON.stringify(value);
+  }
+  _recentWrite(ot) {
+    // Bulk admin operations retain their existing short protection window.
+    return !!((this._dirty || {})[ot] || (this._inFlight || {})[ot]
+      || ((this._localWriteAt || {})[ot] && Date.now() - this._localWriteAt[ot] < 5000));
+  }
   // Order-insensitive equality for two edits objects (Postgres jsonb reorders
   // keys, so a stringify compare would call our own echoes "different").
   // A missing field and an empty one are the same thing everywhere in the app.
@@ -429,16 +466,57 @@ class Component extends DCLogic {
   }
 
   // Write the current edits for one OT to local storage + Supabase.
+  _saveIndicator() {
+    if (this._disposed) return;
+    const status = Object.keys(this._retryTimers || {}).length ? 'Retrying save…'
+      : Object.keys(this._dirty || {}).length ? 'Saving…' : 'Saved';
+    if (status !== this.state.saveStatus) this.setState({ saveStatus: status });
+  }
+  _blockBulkWhileSaving() {
+    if (!Object.keys(this._dirty || {}).length) return false;
+    const message = 'Wait for pending edits to finish saving before restoring or clearing the tracker.';
+    this._adminSet({ view: null, notice: message, wipeErr: message });
+    return true;
+  }
   _persist(ot) {
+    this._dirty = this._dirty || {};
+    this._dirty[ot] = true;
+    clearTimeout((this._saveTimers || {})[ot]);
+    if (this._saveTimers) delete this._saveTimers[ot];
     try { localStorage.setItem(this.LS_KEY, JSON.stringify(this._edits)); } catch (err) {}
-    if (this._sb) {
-      // Local-clock stamp, only ever compared against this machine's clock.
-      this._localWriteAt = this._localWriteAt || {};
-      this._localWriteAt[ot] = Date.now();
-      this._sb.from('ot_edits')
-        .upsert({ ot: ot, edits: this._edits[ot], updated_at: new Date().toISOString() }, { onConflict: 'ot' })
-        .then(({ error }) => { if (error) console.warn('Supabase save failed.', error); });
+    this._sendSave(ot);
+  }
+  async _sendSave(ot) {
+    if (this._disposed) return;
+    this._inFlight = this._inFlight || {};
+    this._retryTimers = this._retryTimers || {};
+    this._saveAttempts = this._saveAttempts || {};
+    if (this._inFlight[ot]) return;
+    clearTimeout(this._retryTimers[ot]);
+    delete this._retryTimers[ot];
+    const snapshot = { ...this._edits[ot] };
+    this._inFlight[ot] = true;
+    this._saveIndicator();
+    try {
+      if (!this._sb) await this._initSupabase();
+      if (!this._sb) throw new Error('Database unavailable');
+      const { error } = await this._sb.from('ot_edits')
+        .upsert({ ot, edits: snapshot, updated_at: new Date().toISOString() }, { onConflict: 'ot' });
+      if (error) throw error;
+      this._writeGeneration = (this._writeGeneration || 0) + 1;
+      delete this._inFlight[ot];
+      delete this._saveAttempts[ot];
+      if (this._disposed) return;
+      if (this._sameEdits(snapshot, this._edits[ot])) delete this._dirty[ot];
+      else { this._sendSave(ot); return; }
+    } catch (e) {
+      delete this._inFlight[ot];
+      if (this._disposed) return;
+      console.warn('Supabase save failed; retrying.', e);
+      const attempt = this._saveAttempts[ot] = Math.min(6, (this._saveAttempts[ot] || 0) + 1);
+      this._retryTimers[ot] = setTimeout(() => this._sendSave(ot), Math.min(30000, 1000 * Math.pow(2, attempt - 1)));
     }
+    this._saveIndicator();
   }
 
   // Immediate save — used for discrete actions (e.g. clearing a row).
@@ -451,6 +529,9 @@ class Component extends DCLogic {
   // Debounced save — used while typing so we write once the user pauses,
   // not on every keystroke (avoids per-keystroke network/storage lag).
   _queueSave(ot) {
+    this._dirty = this._dirty || {};
+    this._dirty[ot] = true;
+    this._saveIndicator();
     this._saveTimers = this._saveTimers || {};
     clearTimeout(this._saveTimers[ot]);
     this._saveTimers[ot] = setTimeout(() => { delete this._saveTimers[ot]; this._persist(ot); }, 500);
@@ -458,7 +539,7 @@ class Component extends DCLogic {
 
   // --- Live presence: "someone is editing" + live viewer count ----------
   _initPresence() {
-    if (!this._sb || this._presence) return;
+    if (!this._sb || this._viaProxy() || this._presence) return;
     // Unique per-tab key so each open viewer is counted once.
     this._presenceKey = 'v_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
     this._presence = this._sb.channel('ot_presence', {
@@ -671,6 +752,7 @@ class Component extends DCLogic {
   // the snapshot are cleared. A safety copy of the current state is versioned
   // first, so a restore is always undoable.
   async _adminRestore(key) {
+    if (this._blockBulkWhileSaving()) return;
     if (!this._sb) return;
     this._adminSet({ busy: true });
     try {
@@ -710,6 +792,7 @@ class Component extends DCLogic {
   // "Pre-wipe safety copy" version is saved first, and the pre-wipe edits are
   // kept in memory for a 60-second one-click undo.
   async _adminWipe() {
+    if (this._blockBulkWhileSaving()) return;
     const a = this.state.admin;
     if (!a || a.busy) return;
     // The word must be physically typed — the input blocks paste/drop — so a
@@ -756,6 +839,7 @@ class Component extends DCLogic {
     }
   }
   async _adminWipeUndo() {
+    if (this._blockBulkWhileSaving()) return;
     if (!this._wipeUndo) return;
     const a = this.state.admin;
     if (a && a.busy) return;
@@ -1150,16 +1234,12 @@ class Component extends DCLogic {
       onBackToTop: () => window.scrollTo({ top: 0, behavior: 'smooth' }),
       onSearchJump: () => { const el = document.getElementById('ot-search'); if (!el) return; const top = el.getBoundingClientRect().top + (window.scrollY || 0) - 90; window.scrollTo({ top, behavior: 'smooth' }); setTimeout(() => { try { el.focus(); } catch (e) {} }, 420); },
       modeBtn: { onClick: () => this.setState(s => { const dark = !s.dark; try { localStorage.setItem('ot-tracker-darkmode', dark ? '1' : '0'); } catch (e) {} return { dark }; }), label: this.state.dark ? '☀ Light' : '☾ Dark' },
-      viewerCount: this.state.viewers,
-      viewerEyeColor: this.state.live === 'live' ? '#4ade80' : (this.state.live === 'reconnecting' ? '#F2A900' : '#8A919B'),
-      viewerTitle: (this.state.viewers === 1 ? 'You are the only person viewing this tracker' : this.state.viewers + ' people are viewing this tracker right now')
-        + (this.state.live === 'live' ? ''
-            // Behind the same-origin proxy live push can't connect by design,
-            // so say what's actually happening instead of "reconnecting…".
-            : this._viaProxy() ? ' · Live push unavailable on this network — syncing every ' + Math.round(this._pollMs() / 1000) + 's'
-            : this.state.live === 'reconnecting'
-            ? ' · Reconnecting to live updates (still syncing every ' + Math.round(this._pollMs() / 1000) + 's)'
-            : ' · Live sync offline — showing last synced data'),
+      viewerCount: this._viaProxy() ? (this.state.live === 'synced' ? 'Synced' : this.state.live === 'connecting' ? 'Connecting' : 'Offline') : this.state.viewers,
+      saveStatus: this.state.saveStatus,
+      viewerEyeColor: (this.state.live === 'live' || this.state.live === 'synced') ? '#4ade80' : (this.state.live === 'reconnecting' ? '#F2A900' : '#8A919B'),
+      viewerTitle: this._viaProxy()
+        ? (this.state.live === 'synced' ? 'Checking for updates every 3 seconds while visible. Viewer count unavailable on this connection.' : 'Database connection unavailable or still connecting. Unsaved edits retry automatically while this page stays open.')
+        : (this.state.viewers + ' viewer(s) · ' + this.state.live),
       ...this._adminUI() };
     if (!d) {
       return { ...base, total: '—', otPct: '—', otDone: '—', btsDone: '—', activeTotal: '—',
