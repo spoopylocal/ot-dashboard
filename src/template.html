@@ -562,6 +562,7 @@
         <span title="{{ viewerTitle }}" style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.14); line-height: 1;">
           <svg width="14" height="14" sc-camel-view-box="0 0 24 24" fill="none" stroke="{{ viewerEyeColor }}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"></path><circle cx="12" cy="12" r="3"></circle></svg>
           <span style="font-weight: 700; color: #fff;">{{ viewerCount }}</span>
+          <span role="status" aria-live="polite" style="font-size: 12px; color: #fff;">{{ saveStatus }}</span>
         </span>
       </div>
       <button sc-camel-on-click="{{ modeBtn.onClick }}" title="Toggle dark mode" style="display: inline-flex; align-items: center; gap: 7px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #fff; font-family: var(--font-sans); font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: 999px; cursor: pointer; line-height: 1;">{{ modeBtn.label }}</button>
