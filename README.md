@@ -74,6 +74,30 @@ producing a corrupt file.
 
 ## Notes
 
+### Local sync improvements
+
+- Through the Netlify proxy, visible pages poll three seconds after the previous
+  poll completes. Hidden pages skip polls; focus, visibility, and reconnect still
+  request an immediate refresh. Failed reads back off up to 60 seconds.
+- Normal sync queries exclude `__` metadata rows on the server, except the
+  configuration row. Backup reads in the admin panel remain separate.
+- Identical poll results skip record rebuilding, rendering, and localStorage
+  writes. Proxy mode does not start unsupported WebSocket/presence channels;
+  the header shows connection status instead of an unavailable viewer count.
+- Location saves remain debounced by 500 ms. Each location has at most one save
+  in flight; newer edits follow its acknowledgment. Failed saves retry with
+  backoff up to 30 seconds and remain protected from polling. The header shows
+  Saving / Saved / Retrying save. These labels cover location edits, not admin
+  configuration or bulk operations.
+- Retries live in the open page, not a durable background queue. Wait for Saved
+  before closing; the browser is asked to warn if unsaved edits remain. Bulk
+  restores and wipes wait until pending location saves finish.
+- This does not resolve cross-client conflicts on the same location: writes
+  still replace a full edits object. Atomic field merging needs a database change.
+- Run `node --test sync.test.cjs` for isolated sync regression tests, then
+  `node build.js`. Tests simulate database responses and never contact Supabase.
+  Actual propagation latency must be measured on the warehouse network.
+
 - Live edits (work orders, serials, statuses, notes) are stored in the
   `ot_edits` Supabase table, not in `data.js` — `data.js` is only the seed
   layout of locations/zones. The Supabase URL/key live in `src/app_logic.js`.
