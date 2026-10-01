@@ -106,3 +106,17 @@ producing a corrupt file.
   localStorage-only edits.
 - A `sku` tab is scaffolded in the logic (`showSku`) but not registered in
   the tab bar — only the tracker tab is exposed.
+
+### Overflow lanes (multi-order rows)
+
+- `ZL4OVRFLW01–10` and `ZL4OVRFLWSTK01–10` are seeded in `src/data.js` with
+  `zone: "Overflow"` and `multi: true`. They share one Overflow card on the map
+  (stack lanes show `S01–S10`) and sit under a collapsible Overflow header at the
+  bottom of the table.
+- Each lane holds many orders in `edits.items`, a JSON string of
+  `[{wo, serial, lpn, status, date}]`, so sync, backups, restore and wipe treat
+  it as one text field. Expand a lane to add, edit or remove orders.
+- The lane's top row shows no status; each order carries its own. KPI cards,
+  legend and duplicate checks count every order; the ring counts locations.
+- Two people editing the same lane at once can still overwrite each other
+  (whole-row writes, see above).
