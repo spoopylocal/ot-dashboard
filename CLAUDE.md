@@ -5,6 +5,11 @@ When working on the OT Dashboard:
 - Do the work on a feature branch cut from `ot-dashboard`, then **commit and push** it.
 - **Do NOT open a pull request.** The maintainer creates the PR to merge into `main` manually.
 - Only open a PR if explicitly asked to.
+- Releases: Benji is OK with Claude opening and merging the `ot-dashboard` → `main`
+  release PR after a feature is merged, but **always ask him first** before doing it.
+- Pushing: the sandbox has no GitHub credentials. Push from Benji's machine via
+  Desktop Commander (git bundle → temp clone in `%TEMP%\ot-dash-pr` → `git push`),
+  then open PRs in Chrome (no `gh` CLI installed).
 - `ot-dashboard` is the shared integration branch (multiple people build off it);
   `main` is what Netlify deploys. Prefer one-way flow: features → `ot-dashboard`,
   then `ot-dashboard` → `main` for releases.
