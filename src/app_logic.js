@@ -1452,7 +1452,7 @@ class Component extends DCLogic {
           // location code), inked for contrast against the square's fill.
           const numInk = (m.hazard || st === 'Issue/Hold') ? '#fff' : this._ink(m.color);
           return { title: primaryLoc + ' · ' + (rec._count ? rec._count + ' order' + (rec._count > 1 ? 's' : '') + ' · ' : '') + m.label + ' · double-click to jump to row · right-click to copy WO/Serial/LPN',
-            num: (/OVRFLWSTK/i.test(rec.ot) ? 'S' : '') + this.shortLoc(rec.ot).slice(-2),
+            num: this.shortLoc(rec.ot).slice(-2),
             badge: rec._count ? String(rec._count) : '',
             badgeStyle: `position:absolute;bottom:2px;right:3px;font-family:var(--font-mono);font-size:9px;font-weight:800;line-height:1;color:${numInk};opacity:0.92;pointer-events:none;`,
             numStyle: `position:absolute;top:2px;left:4px;font-family:var(--font-mono);font-size:9px;font-weight:800;line-height:1;color:${numInk};opacity:0.92;pointer-events:none;`,
@@ -1520,7 +1520,8 @@ class Component extends DCLogic {
       sel = { headStyle: selHead(hazardSel ? '#16191d' : m.color, headImg, st === 'Pending' ? 'var(--wwt-ink)' : '#fff'),
         kicker: m.label, otLoc: this.norm(sr.status) === 'OT Completed' ? sr.ot : sr.bts,
         fields: sr.multi ? [
-          { k: 'Location', v: sr.ot || '—', mono: 'var(--font-mono)' },
+          { k: 'OT location', v: sr.ot || '—', mono: 'var(--font-mono)' },
+          { k: 'BTS location', v: sr.bts || '—', mono: 'var(--font-mono)' },
           { k: 'Zone', v: sr.zone, mono: 'var(--font-mono)' },
           { k: 'Orders', v: String(sr._count || 0), mono: 'var(--font-mono)' },
           ...(sr._items || []).map(it => ({ k: (it.wo || '').trim() || '(no WO)', v: this.META[this.eff(it)].label, mono: 'var(--font-mono)' })),
