@@ -719,8 +719,8 @@
                           <span style="font-size: 20px; font-weight: 900; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text);">Overflow</span>
                           <span style="font-family: var(--font-mono); font-size: 13px; color: var(--muted);">{{ r.sectionLabel }}</span>
                         </span>
-                        <span style="display: flex; flex: 1; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; min-width: 0;">
-                          <span style="position: relative; flex: 1; max-width: 520px; min-width: 220px; display: inline-flex; align-items: center;">
+                        <span style="display: flex; flex: 1; gap: 10px; align-items: center; flex-wrap: wrap; min-width: 0; margin-left: 12px;">
+                          <span style="position: relative; flex: 1; min-width: 220px; display: inline-flex; align-items: center;">
                             <input id="ot-ov-search" value="{{ query }}" sc-camel-on-input="{{ onSearch }}" placeholder="Search location, work order, serial, LPN…" style="width: 100%; height: 36px; padding: 0 34px 0 12px; border: 1.5px solid var(--line-strong); border-radius: 4px; font-family: var(--font-sans); font-size: 13.5px; color: var(--text); background: var(--surface); outline: none; box-sizing: border-box;" style-focus="border-color: var(--wwt-blue);">
                             <sc-if value="{{ hasQuery }}" hint-placeholder-val="{{ false }}">
                               <button sc-camel-on-click="{{ onClearSearch }}" title="Clear search" style="position: absolute; right: 7px; top: 50%; transform: translateY(-50%); display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 999px; border: none; background: var(--surface-2); color: var(--faint); cursor: pointer; padding: 0;" style-hover="background: var(--wwt-red-deep); color: #fff;"><svg width="12" height="12" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg></button>
