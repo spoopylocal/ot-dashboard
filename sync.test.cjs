@@ -155,3 +155,64 @@ test('backup restore fetch remains unfiltered', async () => {
   await app._adminRestore('__backup__123');
   assert.equal(fetched, '__backup__123');
 });
+test('multi rows derive status from their most urgent order', () => {
+  const { app } = setup();
+  const v = (items, extra) => app._multiView({ ot: 'O', multi: true, items: JSON.stringify(items), ...extra });
+  assert.equal(v([{ wo: '1', status: 'OT Completed' }, { wo: '2', status: 'Issue/Hold' }]).status, 'Issue/Hold');
+  assert.equal(v([{ wo: '1', status: 'BTS Completed' }, { wo: '', status: '' }]).status, 'BTS Completed');
+  assert.equal(app.eff(v([{ wo: '9', status: '' }, { wo: '1', status: 'OT Completed' }])), 'WO entered');
+  assert.equal(v([{ wo: '1', status: 'OT Completed' }], { status: 'DO NOT USE' }).status, 'DO NOT USE');
+  assert.equal(v([{ wo: 'a' }, { wo: 'b' }])._count, 2);
+  assert.equal(v([{ wo: 'a' }, { wo: 'b' }]).wo, 'a\nb');
+});
+test('orders sync and back up as one text field', async () => {
+  const { app } = setup();
+  app._seedRecords = [{ ot: 'O', zone: 'Overflow', multi: true }];
+  app.state.data = { records: app._composeRecords() };
+  app._sb = { from() { return { upsert() { return Promise.resolve({}); } }; } };
+  app._itemAdd('O'); app._itemEdit('O', 0, 'wo', '555'); app._itemAdd('O'); app._itemRemove('O', 1);
+  assert.equal(typeof app._edits.O.items, 'string');
+  assert.equal(app._items(app._edits.O).map(i => i.wo).join(), '555');
+  assert.equal(app._canonSnapshot().O.items, app._edits.O.items);
+  assert.equal(app._sameEdits({ items: '[{"wo":"1"}]' }, { items: '[{"wo":"2"}]' }), false);
+});
+test('search finds orders inside overflow rows and opens them', () => {
+  const { app } = setup();
+  app._seedRecords = [{ ot: 'A', bts: 'A', zone: '0100', wo: '' }, { ot: 'ZL4OVRFLW01', bts: 'ZL4OVRFLW01', zone: 'Overflow', multi: true }];
+  app._edits = { ZL4OVRFLW01: { items: JSON.stringify([{ wo: 'WO-77', serial: 'SN-9', lpn: 'LP-5', status: 'Issue/Hold' }]) } };
+  app.state.data = { records: app._composeRecords() };
+  const rows = (q, extra) => { Object.assign(app.state, { query: q, ovCollapsed: false, openRows: {} }, extra); return app.renderVals().rows; };
+  for (const q of ['wo-77', 'SN-9', 'lp-5', 'ovrflw01']) assert.equal(rows(q).map(r => r.ot).join(), 'ZL4OVRFLW01', q);
+  assert.equal(rows('WO-77')[0].open, true);
+  assert.equal(rows('WO-77', { ovCollapsed: true })[0].showRow, true);
+  assert.equal(rows('', { ovCollapsed: true }).find(r => r.ot === 'ZL4OVRFLW01').showRow, false);
+  assert.equal(rows('nothing').length, 0);
+  const sq = app.renderVals().racks.find(r => r.zone === 'Overflow').slots[0];
+  app.state.ovCollapsed = true; sq.onSelect();
+  assert.equal(app.state.ovCollapsed, false);
+});
+test('search highlights matching values only while armed', () => {
+  const { app } = setup();
+  app._seedRecords = [{ ot: 'NA1L4OT0101', bts: 'ZL4BTS0101', zone: '0100', wo: 'WO-1' }, { ot: 'ZL4OVRFLW01', bts: 'ZL4OVRFLW01', zone: 'Overflow', multi: true }];
+  app._edits = { ZL4OVRFLW01: { items: JSON.stringify([{ wo: 'WO-1B', serial: 'SN-1' }]) } };
+  app.state.data = { records: app._composeRecords() };
+  Object.assign(app.state, { query: 'wo-1', openRows: {}, hlOn: true });
+  let rs = app.renderVals().rows;
+  assert.match(rs[0].cells.find(c => c.key === 'wo').inputStyle, /ot-hl-blink/);
+  assert.match(rs[1].orders[0].wo.style, /ot-hl-blink/);
+  assert.doesNotMatch(rs[1].orders[0].serial.style, /ot-hl-blink/);
+  app.state.hlOn = false;
+  rs = app.renderVals().rows;
+  assert.doesNotMatch(rs[0].cells.find(c => c.key === 'wo').inputStyle, /ot-hl-blink/);
+});
+test('Overflow jump button opens the section and clears filters hiding it', () => {
+  const { app } = setup();
+  app._seedRecords = [{ ot: 'A', bts: 'A', zone: '0100', wo: 'X1' }, { ot: 'ZL4OVRFLW01', bts: 'ZL4OVRFLW01', zone: 'Overflow', multi: true }];
+  app.state.data = { records: app._composeRecords() };
+  Object.assign(app.state, { query: 'X1', zoneFilter: '0100', ovCollapsed: true, openRows: {} });
+  app.renderVals().onOverflowJump();
+  assert.equal(app.state.query, ''); assert.equal(app.state.zoneFilter, 'all'); assert.equal(app.state.ovCollapsed, false);
+  Object.assign(app.state, { query: 'OVRFLW', ovCollapsed: true });
+  app.renderVals().onOverflowJump();
+  assert.equal(app.state.query, 'OVRFLW'); assert.equal(app.state.ovCollapsed, false);
+});

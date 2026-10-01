@@ -1,6 +1,6 @@
 
 class Component extends DCLogic {
-  state = { data: null, tab: 'tracker', query: '', zoneFilter: 'all', statusFilter: 'all', sortKey: null, sortDir: 1, sel: null, dark: false, barHover: null, cleared: {}, clearedAt: {}, now: 0, confirmClear: null, scrolled: false, noteEdit: null, noteText: '', noDice: null, noteHover: null, datePicker: null, copied: null, admin: null, viewers: 1, live: 'connecting', saveStatus: '' };
+  state = { data: null, tab: 'tracker', query: '', zoneFilter: 'all', statusFilter: 'all', sortKey: null, sortDir: 1, sel: null, dark: false, barHover: null, cleared: {}, clearedAt: {}, now: 0, confirmClear: null, scrolled: false, noteEdit: null, noteText: '', noDice: null, noteHover: null, datePicker: null, copied: null, openRows: {}, admin: null, viewers: 1, live: 'connecting', saveStatus: '' };
 
   componentDidMount() {
     const src = window.__OT_DATA ? Promise.resolve(window.__OT_DATA) : fetch('ot_data.json').then(r => r.json());
@@ -37,6 +37,7 @@ class Component extends DCLogic {
     };
     window.addEventListener('scroll', this._onScroll, { passive: true });
     try { const dm = localStorage.getItem('ot-tracker-darkmode'); if (dm !== null) this.setState({ dark: dm === '1' }); } catch (e) {}
+    try { if (localStorage.getItem('ot-overflow-collapsed') === '1') this.setState({ ovCollapsed: true }); } catch (e) {}
     // Hidden admin panel: Shift+B anywhere outside a form field.
     this._onKeyDown = (e) => {
       if (!(e.shiftKey && (e.key === 'B' || e.key === 'b'))) return;
@@ -98,7 +99,7 @@ class Component extends DCLogic {
   // Fields whose values are stored per-location in the edits object and captured
   // by version backups: the editable columns (minus location/zone) plus the
   // always-present "note" (which is edited via its own modal, not a column).
-  _bkFields() { return this._dataFields().map(f => f.key).concat('note'); }
+  _bkFields() { return this._dataFields().map(f => f.key).concat('note', 'items'); }
   cfg = null;
   _defaultConfig() {
     return { statuses: this.DEFAULT_STATUSES.map(s => ({ ...s })),
@@ -135,6 +136,38 @@ class Component extends DCLogic {
   // Effective state for the map/legend: a location with a work order but no
   // status yet counts (and now shows) as "WO entered" rather than empty.
   eff(r) { const s = this.norm(r.status); return (s === 'Pending' && (r.wo || '').trim()) ? 'WO entered' : s; }
+
+  // Multi-order rows (seed flag `multi`, the Overflow rows) keep their orders in
+  // edits.items as a JSON string, so sync, backups, restore and wipe treat it
+  // as one plain text field like any other.
+  _items(r) { try { const a = JSON.parse((r && r.items) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+  _setItems(ot, items) { this.updateField(ot, 'items', items.length ? JSON.stringify(items) : ''); }
+  _rawRec(ot) { return ((this.state.data && this.state.data.records) || []).find(x => x.ot === ot) || {}; }
+  _itemEdit(ot, i, field, value) {
+    const items = this._items(this._rawRec(ot));
+    if (!items[i]) return;
+    items[i] = { ...items[i], [field]: value };
+    this._setItems(ot, items);
+  }
+  _itemAdd(ot) {
+    this._setItems(ot, this._items(this._rawRec(ot)).concat([{ wo: '', serial: '', lpn: '', status: '', date: '' }]));
+    this.setState(s => ({ openRows: { ...s.openRows, [ot]: true } }));
+  }
+  _itemRemove(ot, i) { const items = this._items(this._rawRec(ot)); items.splice(i, 1); this._setItems(ot, items); }
+  // Row color = its most urgent order; empty lines never outrank real ones.
+  ITEM_RANK = { 'Issue/Hold': 0, 'In Progress': 1, 'WO entered': 3, 'BTS Completed': 4, 'OT Completed': 5, 'Pending': 9 };
+  _multiView(r) {
+    if (!r.multi) return r;
+    const items = this._items(r);
+    const raw = this.norm(r.status);
+    if ((this.META[raw] || {}).hazard || !items.length)
+      return { ...r, _items: items, _count: items.length, _units: [r], wo: '', serial: '', lpn: '', date: '' };
+    const rank = (it) => { const s = this.eff(it); return s in this.ITEM_RANK ? this.ITEM_RANK[s] : 2; };
+    const top = items.reduce((b, it) => rank(it) < rank(b) ? it : b);
+    const j = (k) => items.map(it => (it[k] || '').trim()).filter(Boolean).join('\n');
+    return { ...r, _items: items, _count: items.length, _units: items,
+      status: rank(top) === 3 ? '' : (top.status || ''), wo: j('wo'), serial: j('serial'), lpn: j('lpn'), date: '' };
+  }
 
   // Compose the visible location records from seed + config (added / hidden)
   // merged with the live edits. Used on load and whenever config changes.
@@ -586,7 +619,7 @@ class Component extends DCLogic {
     try { this._presence.send({ type: 'broadcast', event: 'editing', payload: { ot: ot, field: field || '' } }); } catch (e) {}
   }
   _fieldLabel(f) {
-    return ({ wo: 'WO', serial: 'Serial', lpn: 'LPN', status: 'Status', date: 'Date', note: 'Note' })[f] || 'this row';
+    return ({ wo: 'WO', serial: 'Serial', lpn: 'LPN', status: 'Status', date: 'Date', note: 'Note', items: 'Orders' })[f] || 'this row';
   }
 
   // === Versioned backups ================================================
@@ -731,8 +764,9 @@ class Component extends DCLogic {
         const from = (c[f] || '').toString().trim();    // current value (now)
         if (from === to) return;
         const change = !from ? 'add' : (!to ? 'remove' : 'change');
+        const show = (x) => f === 'items' && x ? this._items({ items: x }).map(it => it.wo || '?').join(', ') : (x || '—');
         fields.push({ label: this._fieldLabel(f), from, to, change,
-          fromShow: from || '—', toShow: to || '—' });
+          fromShow: show(from), toShow: show(to) });
       });
       if (!fields.length) return;
       const inVer = Object.keys(v).some(f => (v[f] || '').toString().trim());
@@ -1120,8 +1154,8 @@ class Component extends DCLogic {
   clearRow(ot) {
     const snapshot = {};
     const cur = this.state.data.records.find(r => r.ot === ot) || {};
-    ['wo','serial','lpn','status','date'].forEach(f => { snapshot[f] = cur[f] || ''; });
-    const fields = { wo: '', serial: '', lpn: '', status: '', date: '' };
+    ['wo','serial','lpn','status','date','items'].forEach(f => { snapshot[f] = cur[f] || ''; });
+    const fields = { wo: '', serial: '', lpn: '', status: '', date: '', items: '' };
     snapshot.note = cur.note || '';
     fields.note = '';
     // One write for the whole clear (was one upsert per field — six racing
@@ -1248,14 +1282,19 @@ class Component extends DCLogic {
         showTracker: true, empty: false, resultCount: 0, query: '',
         sel: { headStyle: 'background-color:var(--gray-100);color:var(--gray-500);padding:20px 22px;', kicker: 'Loading', otLoc: '…', fields: [] } };
     }
-    const allRecs = d.records;
+    const allRecs = d.records.map(r => this._multiView(r));
     const recs = allRecs.filter(r => !r.obstructed);
     const total = recs.length;
+    // Ring/capacity count locations; KPIs, legend and dup checks count orders
+    // (each order on a multi row is its own unit).
+    const units = [].concat(...recs.map(r => r._units || [r]));
     const count = (s) => recs.filter(r => this.norm(r.status) === s).length;
-    const otDone = count('OT Completed');
-    const btsDone = count('BTS Completed');
-    const prog = count('In Progress');
-    const issue = count('Issue/Hold');
+    const countOrd = (s) => units.filter(u => this.norm(u.status) === s).length;
+    const matchFilter = (r) => this.state.statusFilter === 'all' || (r._units || [r]).some(u => this._statusInFilter(this.eff(u)));
+    const otDone = countOrd('OT Completed');
+    const btsDone = countOrd('BTS Completed');
+    const prog = countOrd('In Progress');
+    const issue = countOrd('Issue/Hold');
     const dnu = count('DO NOT USE');
     const pending = count('Pending');
     const activeTotal = total;
@@ -1274,10 +1313,10 @@ class Component extends DCLogic {
     // thickens it and swaps the center readout to that status; clicking
     // filters (shift-click additive) — same interactions the old bar had.
     const segDefs = [
-      { s: 'OT Completed', n: otDone },
-      { s: 'BTS Completed', n: btsDone },
-      { s: 'In Progress', n: prog },
-      { s: 'Issue/Hold', n: issue },
+      { s: 'OT Completed', n: count('OT Completed') },
+      { s: 'BTS Completed', n: count('BTS Completed') },
+      { s: 'In Progress', n: count('In Progress') },
+      { s: 'Issue/Hold', n: count('Issue/Hold') },
     ];
     const RING_CIRC = 2 * Math.PI * 78;
     let ringAcc = 0;
@@ -1304,7 +1343,7 @@ class Component extends DCLogic {
     const kpiVal = { 'OT Completed': otDone, 'BTS Completed': btsDone, 'In Progress': prog, 'Issue/Hold': issue };
     const kpiDefs = this._statusList().filter(s => s.kpi && !s.reserved && !s.derived).map(s => {
       const lbl = KPI_LABEL[s.key] || s.label;
-      return { label: lbl, value: (s.key in kpiVal) ? kpiVal[s.key] : count(s.key), status: s.key,
+      return { label: lbl, value: (s.key in kpiVal) ? kpiVal[s.key] : countOrd(s.key), status: s.key,
         empty: 'No orders are ' + lbl + '.', color: s.color, num: s.color, sub: s.sub || '' };
     });
     const kpis = kpiDefs.map(k => {
@@ -1325,7 +1364,7 @@ class Component extends DCLogic {
         copyTitle: 'Copy all work orders — ' + k.label,
         onCopyWos: (e) => {
           if (e) { e.preventDefault(); e.stopPropagation(); }
-          const wos = recs.filter(r => this.norm(r.status) === k.status).map(r => (r.wo || '').trim()).filter(Boolean);
+          const wos = units.filter(r => this.norm(r.status) === k.status).map(r => (r.wo || '').trim()).filter(Boolean);
           if (!wos.length) { this._toast('No work orders in ' + k.label, e); return; }
           this._copy(wos.join('\n'), e, 'Copied ' + wos.length + ' work order' + (wos.length > 1 ? 's' : ''));
         },
@@ -1340,7 +1379,7 @@ class Component extends DCLogic {
     };
     const tabs = [ mkTab('tracker', 'OT Tracker') ];
 
-    const countEff = (s) => recs.filter(r => this.eff(r) === s).length;
+    const countEff = (s) => units.filter(r => this.eff(r) === s).length;
     // Legend order follows config, with the empty "Pending" bucket last.
     const order = this._statusList().map(s => s.key).filter(k => k !== 'Pending').concat('Pending');
     const legend = order.filter(s => countEff(s) > 0).map(s => {
@@ -1386,16 +1425,18 @@ class Component extends DCLogic {
           const st = this.eff(rec);
           const m = this.META[st];
           const isSel = rec.ot === selKey;
-          const fade = this.state.statusFilter !== 'all' && !this._statusInFilter(st);
+          const fade = !matchFilter(rec);
           const border = st === 'Pending' ? 'inset 0 0 0 1px var(--line-strong)' : 'inset 0 0 0 1px rgba(0,0,0,0.10)';
           const primaryLoc = st === 'OT Completed' ? rec.ot : rec.bts;
           // Always-on corner number: the in-zone slot (last two digits of the
           // location code), inked for contrast against the square's fill.
           const numInk = (m.hazard || st === 'Issue/Hold') ? '#fff' : this._ink(m.color);
-          return { title: primaryLoc + ' · ' + m.label + ' · double-click to jump to row · right-click to copy WO/Serial/LPN',
-            num: this.shortLoc(rec.ot).slice(-2),
+          return { title: primaryLoc + ' · ' + (rec._count ? rec._count + ' order' + (rec._count > 1 ? 's' : '') + ' · ' : '') + m.label + ' · double-click to jump to row · right-click to copy WO/Serial/LPN',
+            num: (/OVRFLWSTK/i.test(rec.ot) ? 'S' : '') + this.shortLoc(rec.ot).slice(-2),
+            badge: rec._count ? String(rec._count) : '',
+            badgeStyle: `position:absolute;bottom:2px;right:3px;font-family:var(--font-mono);font-size:9px;font-weight:800;line-height:1;color:${numInk};opacity:0.92;pointer-events:none;`,
             numStyle: `position:absolute;top:2px;left:4px;font-family:var(--font-mono);font-size:9px;font-weight:800;line-height:1;color:${numInk};opacity:0.92;pointer-events:none;`,
-            onSelect: () => this.setState({ sel: rec }),
+            onSelect: () => this.setState(rec.multi ? { sel: rec, ovCollapsed: false } : { sel: rec }),
             onCopy: (e) => {
               if (e) e.preventDefault();
               const names = [], parts = [];
@@ -1428,7 +1469,7 @@ class Component extends DCLogic {
           const base = isSel ? 'background:var(--wwt-blue);color:#fff;' : (isToday ? 'background:var(--wwt-blue-tint);color:var(--wwt-blue-deep);font-weight:800;' : 'background:transparent;color:var(--text);');
           return { key: 'd' + day, label: String(day),
             style: 'display:flex;align-items:center;justify-content:center;aspect-ratio:1;border-radius:6px;font-family:var(--font-mono);font-size:13px;cursor:pointer;border:1px solid transparent;transition:background 120ms;' + base,
-            onPick: () => { this.updateField(dp.ot, 'date', dateStr); this.setState({ datePicker: null }); } };
+            onPick: () => { dp.item != null ? this._itemEdit(dp.ot, dp.item, 'date', dateStr) : this.updateField(dp.ot, 'date', dateStr); this.setState({ datePicker: null }); } };
         })
       }));
       datePickerView = {
@@ -1437,13 +1478,13 @@ class Component extends DCLogic {
         weeks,
         onPrev: () => this.setState(s => { let m = s.datePicker.m - 1, y = s.datePicker.y; if (m < 0) { m = 11; y--; } return { datePicker: { ...s.datePicker, m, y } }; }),
         onNext: () => this.setState(s => { let m = s.datePicker.m + 1, y = s.datePicker.y; if (m > 11) { m = 0; y++; } return { datePicker: { ...s.datePicker, m, y } }; }),
-        onToday: () => { const t = new Date(); this.updateField(dp.ot, 'date', (t.getMonth()+1)+'/'+t.getDate()+'/'+t.getFullYear()); this.setState({ datePicker: null }); },
+        onToday: () => { const t = new Date(); const ds = (t.getMonth()+1)+'/'+t.getDate()+'/'+t.getFullYear(); dp.item != null ? this._itemEdit(dp.ot, dp.item, 'date', ds) : this.updateField(dp.ot, 'date', ds); this.setState({ datePicker: null }); },
         onClose: () => this.setState({ datePicker: null })
       };
     }
 
     let sel;
-    const sr = this.state.sel;
+    const sr = this.state.sel && (allRecs.find(x => x.ot === this.state.sel.ot) || this.state.sel);
     // The detail-card header carries the same hazard striping as the rows and
     // map squares (lighter stripes on the darker base): light-red on dark-red
     // for Issue/Hold, grey on black for "Do not use". Softer stripe alphas
@@ -1458,7 +1499,12 @@ class Component extends DCLogic {
         : hazardSel ? 'background-image:repeating-linear-gradient(45deg,rgba(138,145,155,0.45) 0 7px,transparent 7px 14px);' : '';
       sel = { headStyle: selHead(hazardSel ? '#16191d' : m.color, headImg, st === 'Pending' ? 'var(--wwt-ink)' : '#fff'),
         kicker: m.label, otLoc: this.norm(sr.status) === 'OT Completed' ? sr.ot : sr.bts,
-        fields: [
+        fields: sr.multi ? [
+          { k: 'Location', v: sr.ot || '—', mono: 'var(--font-mono)' },
+          { k: 'Zone', v: sr.zone, mono: 'var(--font-mono)' },
+          { k: 'Orders', v: String(sr._count || 0), mono: 'var(--font-mono)' },
+          ...(sr._items || []).map(it => ({ k: (it.wo || '').trim() || '(no WO)', v: this.META[this.eff(it)].label, mono: 'var(--font-mono)' })),
+        ] : [
           { k: 'OT location', v: sr.ot || '—', mono: 'var(--font-mono)' },
           { k: 'BTS location', v: sr.bts || '—', mono: 'var(--font-mono)' },
           { k: 'Zone', v: sr.zone, mono: 'var(--font-mono)' },
@@ -1474,7 +1520,7 @@ class Component extends DCLogic {
     const q = this.state.query.trim().toLowerCase();
     let rows = recs.filter(r => {
       if (this.state.zoneFilter !== 'all' && r.zone !== this.state.zoneFilter) return false;
-      if (this.state.statusFilter !== 'all' && !this._statusInFilter(this.eff(r))) return false;
+      if (!matchFilter(r)) return false;
       if (q && !([r.ot,r.bts,r.wo,r.serial,r.lpn].join(' ').toLowerCase().includes(q))) return false;
       return true;
     });
@@ -1500,7 +1546,7 @@ class Component extends DCLogic {
 
     // duplicate detection — count each non-empty value per column across ALL records
     // Duplicate detection over any field flagged dup:true in config.
-    const dupCount = (field) => { const c = {}; recs.forEach(r => { const v = (r[field] || '').toString().trim(); if (v) c[v] = (c[v] || 0) + 1; }); return c; };
+    const dupCount = (field) => { const c = {}; units.forEach(r => { const v = (r[field] || '').toString().trim(); if (v) c[v] = (c[v] || 0) + 1; }); return c; };
     const dupFields = this._fields().filter(f => f.dup);
     const dupCounts = {}; dupFields.forEach(f => { dupCounts[f.key] = dupCount(f.key); });
     const isDupVal = (counts, v) => { v = (v || '').toString().trim(); return !!(v && counts[v] > 1); };
@@ -1516,6 +1562,8 @@ class Component extends DCLogic {
     // locked row and is what the caution button toggles to.
     const hazKey = (this._statusList().find(s => s.hazard) || {}).key || 'DO NOT USE';
     const fieldsList = this._fields();
+    const HL = 'animation:ot-hl-blink 1s ease-in-out 5;';
+    const hit = (v) => !!(this.state.hlOn && q && (v || '').toString().toLowerCase().includes(q));
     const rowsOut = rows.map((r, ri) => {
       const m = this.metaFor(r.status);
       const isSel = r.ot === selKey;
@@ -1529,21 +1577,37 @@ class Component extends DCLogic {
       const dnuBarStr = dnu ? 'box-shadow: inset 4px 0 0 var(--text);' : '';
       // Issue/Hold rows get the red stripe band + red edge bar (the treatment
       // "Do not use" used to have) but stay editable.
-      const issueRow = !dnu && st0 === 'Issue/Hold';
+      const issueRow = !dnu && !r.multi && st0 === 'Issue/Hold';
       const issueBarStr = issueRow ? 'box-shadow: inset 4px 0 0 var(--wwt-bright-red);' : '';
       const _ed = (this.state.editing || {})[r.ot];
       const selStyle = `appearance:auto;border:1px solid ${dark ? 'transparent' : 'var(--line-strong)'};border-radius:999px;padding:4px 8px;font-family:var(--font-sans);font-size:11px;font-weight:700;cursor:pointer;background:${m.color};color:${dark ? '#fff' : 'var(--gray-600)'};`;
-      const onSelect = () => this.setState({ sel: r });
+      // Multi-order rows expand to show their order lines (auto-open when the
+      // search matches one of their orders).
+      const qHit = !!(r.multi && q && (r._items || []).some(it => [it.wo, it.serial, it.lpn].join(' ').toLowerCase().includes(q)));
+      const open = !!r.multi && (!!(this.state.openRows || {})[r.ot] || qHit);
+      const onSelect = r.multi
+        ? () => this.setState(s => ({ sel: r, openRows: { ...s.openRows, [r.ot]: !open } }))
+        : () => this.setState({ sel: r });
       // One cell per configured field, rendered by type in the template.
       const cells = fieldsList.map((f, ci) => {
         const primary = ci === 0;
         const val = (r[f.key] == null ? '' : r[f.key]).toString();
         const onCopy = (e) => { if (e) e.preventDefault(); const v = val.trim(); if (v) this._copy(v, e); };
         const bdr = 'border-bottom:1px solid var(--line-soft);';
+        const hl = hit(val) ? HL : '';
+        if (r.multi && f.type !== 'location' && f.type !== 'zone') {
+          const n = r._count || 0, em = this.META[this.eff(r)];
+          const text = f.key === 'wo' ? (open ? '▾ ' : '▸ ') + n + ' order' + (n === 1 ? '' : 's')
+            : f.type === 'status' ? '—'
+            : (f.key === 'serial' || f.key === 'lpn') ? (r._items || []).filter(it => (it[f.key] || '').trim()).length + ' / ' + n
+            : '—';
+          return { key: f.key, isRead: true, text, onSelect, onCopy, title: 'Click to show or hide this row\'s orders', showTyping: false, editingField: '', editingLabel: '',
+            tdStyle: `padding:11px 16px;font-family:var(--font-sans);font-size:12.5px;font-weight:700;color:var(--muted);${bdr}white-space:nowrap;cursor:pointer;` };
+        }
         if (f.type === 'location' || f.type === 'zone') {
           return { key: f.key, isRead: true, text: val || '—', onSelect, onCopy, title: 'Right-click to copy',
             showTyping: primary && !!_ed, editingField: _ed ? this._fieldLabel(_ed.field) : '', editingLabel: _ed ? ('Someone is editing ' + this._fieldLabel(_ed.field)) : '',
-            tdStyle: `padding:11px 16px;font-family:var(--font-mono);font-weight:${primary ? '500' : '400'};color:${primary ? 'var(--text)' : 'var(--muted)'};${bdr}white-space:nowrap;cursor:pointer;${primary ? (dnu ? dnuBarStr : issueBarStr) : ''}` };
+            tdStyle: `padding:11px 16px;font-family:var(--font-mono);font-weight:${primary ? '500' : '400'};color:${primary ? 'var(--text)' : 'var(--muted)'};${bdr}white-space:nowrap;cursor:pointer;${primary ? (dnu ? dnuBarStr : issueBarStr) : ''}${hl}` };
         }
         if (f.type === 'status') {
           return { key: f.key, isStatus: true, statusVal: (r.status || '').trim(), onChange: (e) => this.updateField(r.ot, 'status', e.target.value), selStyle, onCopy, title: 'Right-click to copy', tdStyle: `padding:6px 10px;${bdr}` };
@@ -1563,11 +1627,36 @@ class Component extends DCLogic {
         const dup = !!(f.dup && isDupVal(dupCounts[f.key], val));
         return { key: f.key, isInput: true, val, dnuLock: dnu,
           onChange: (e) => this.updateField(r.ot, f.key, e.target.value),
-          inputStyle: dupInput(dup) + dnuDim,
+          inputStyle: dupInput(dup) + dnuDim + hl,
           dupTitle: dup ? ('Duplicate detected — this value appears ' + dupCounts[f.key][val.trim()] + ' times') : '',
           onCopy, title: 'Right-click to copy', tdStyle: `padding:6px 10px;${bdr}white-space:nowrap;` };
       });
-      return { ot: r.ot, cells,
+      const iStyle = (dup) => 'width:100%;box-sizing:border-box;border-radius:4px;padding:5px 7px;font-family:var(--font-mono);font-size:13px;outline:none;' + dnuDim
+        + (dup ? 'border:1px solid var(--wwt-bright-red);background:var(--wwt-bright-red-25);color:var(--wwt-red-deep);font-weight:700;' : 'border:1px solid var(--line);background:var(--surface);color:var(--text);');
+      const orders = open ? (r._items || []).map((it, i) => {
+        const im = this.metaFor(it.status), idark = this.norm(it.status) !== 'Pending';
+        const inp = (k) => ({ val: it[k] || '', onChange: (e) => this._itemEdit(r.ot, i, k, e.target.value),
+          style: iStyle(!!(dupCounts[k] && isDupVal(dupCounts[k], it[k]))) + (hit(it[k]) ? HL : '') });
+        const d0 = (it.date || '').trim();
+        const iIssue = this.norm(it.status) === 'Issue/Hold';
+        return { num: i + 1, wo: inp('wo'), serial: inp('serial'), lpn: inp('lpn'), lock: dnu,
+          lineStyle: 'display:grid;grid-template-columns:28px repeat(3,minmax(130px,1fr)) 150px 130px 28px;gap:8px;align-items:center;padding:4px 6px;border-radius:4px;'
+            + (iIssue ? 'background-color:rgba(238,40,42,0.09);background-image:repeating-linear-gradient(45deg,rgba(238,40,42,0.16) 0 7px,transparent 7px 14px);box-shadow:inset 4px 0 0 var(--wwt-bright-red);' : ''),
+          statusVal: (it.status || '').trim(), onStatus: (e) => this._itemEdit(r.ot, i, 'status', e.target.value),
+          selStyle: `width:100%;appearance:auto;border:1px solid ${idark ? 'transparent' : 'var(--line-strong)'};border-radius:999px;padding:4px 8px;font-family:var(--font-sans);font-size:11px;font-weight:700;cursor:pointer;background:${im.color};color:${idark ? '#fff' : 'var(--gray-600)'};${dnuDim}`,
+          hasDate: !!d0, noDate: !d0, dateText: d0,
+          onDateSet: () => { if (!dnu) this._itemEdit(r.ot, i, 'date', this.todayStr()); },
+          onDateClear: () => { if (!dnu) this._itemEdit(r.ot, i, 'date', ''); },
+          onDateMenu: (e) => { e.preventDefault(); if (dnu) return; const n = new Date(); let y = n.getFullYear(), mm = n.getMonth(); const p = d0.split('/'); if (p.length === 3) { mm = (+p[0]) - 1; y = +p[2]; } this.setState({ datePicker: { ot: r.ot, item: i, bts: r.bts + ' · order ' + (i + 1), y, m: mm, current: d0 } }); },
+          onRemove: () => { if (!dnu) this._itemRemove(r.ot, i); } };
+      }) : [];
+      const sectionHead = !!(r.multi && !sk && (ri === 0 || !rows[ri - 1].multi));
+      const ovHidden = !!(r.multi && this.state.ovCollapsed && !q);
+      return { ot: r.ot, cells, open, orders, noOrders: open && !r._count, addLock: dnu, sectionHead, showRow: !ovHidden,
+        ovToggleLabel: this.state.ovCollapsed && !q ? '▸ Expand' : '▾ Collapse',
+        onOvToggle: () => this.setState(s => { const v = !s.ovCollapsed; try { localStorage.setItem('ot-overflow-collapsed', v ? '1' : '0'); } catch (e) {} return { ovCollapsed: v }; }),
+        sectionLabel: sectionHead ? rows.filter(x => x.multi).length + ' lanes · ' + rows.filter(x => x.multi).reduce((n, x) => n + (x._count || 0), 0) + ' orders' : '',
+        onAddOrder: () => { if (!dnu) this._itemAdd(r.ot); },
         // "Do not use" — caution-button toggle, hazard-striped row, locked fields.
         dnuLock: dnu,
         dnuTitle: dnu ? 'Unmark “Do not use”' : 'Mark location “Do not use”',
@@ -1609,7 +1698,7 @@ class Component extends DCLogic {
     }));
     columns.push({ label: '', arrow: '', title: '', onSort: () => {}, onCopy: (e) => { if (e) e.preventDefault(); }, style: 'width:44px;padding:11px 10px;border-bottom:1px solid var(--line);' });
 
-    const zoneOptions = [{ value: 'all', label: 'All zones' }, ...zones.map(z => ({ value: z, label: 'Zone ' + z }))];
+    const zoneOptions = [{ value: 'all', label: 'All zones' }, ...zones.map(z => ({ value: z, label: /^\d+$/.test(z) ? 'Zone ' + z : z }))];
 
     return {
       ...base, total, otPct, otDone, btsDone, activeTotal, capacity,
@@ -1635,16 +1724,28 @@ class Component extends DCLogic {
       noDiceEmoji: (this.state.noDice || '').indexOf('obstructed') > -1 ? '🚧' : '🎲',
       onNoDiceClose: () => this.setState({ noDice: null }),
       hasQuery: (this.state.query || '').length > 0,
-      onClearSearch: () => this.setState({ query: '' }),
+      onClearSearch: () => { clearTimeout(this._hlTimer); this.setState({ query: '', hlOn: false }); },
       showDatePicker: !!datePickerView,
       datePicker: datePickerView,
       kpis, tabs, legend, racks, sel,
       showTracker: this.state.tab === 'tracker',
       query: this.state.query, zoneFilter: this.state.zoneFilter,
-      onSearch: (e) => this.setState({ query: e.target.value }),
+      // Matched values blink 5 times (5s) once typing pauses (re-arms on each new search).
+      onSearch: (e) => {
+        this.setState({ query: e.target.value, hlOn: false });
+        clearTimeout(this._hlTimer); clearTimeout(this._hlOff);
+        this._hlTimer = setTimeout(() => { this.setState({ hlOn: true }); this._hlOff = setTimeout(() => this.setState({ hlOn: false }), 5100); }, 450);
+      },
       onZone: (e) => this.setState({ zoneFilter: e.target.value }),
       onBarLeave: () => this.setState({ barHover: null }),
-      zoneOptions, zoneCount: zones.length, columns, rows: rowsOut, resultCount, empty: resultCount === 0,
+      // Floating "Overflow" button: open the section, clear whatever hides it, then scroll to its header.
+      onOverflowJump: () => {
+        const hidden = !rowsOut.some(r => r.sectionHead);
+        try { localStorage.setItem('ot-overflow-collapsed', '0'); } catch (e) {}
+        this.setState(hidden ? { ovCollapsed: false, sortKey: null, query: '', zoneFilter: 'all', statusFilter: 'all', hlOn: false } : { ovCollapsed: false });
+        setTimeout(() => { const el = document.getElementById('ot-overflow-head'); if (!el) return; window.scrollTo({ top: el.getBoundingClientRect().top + (window.scrollY || 0) - 90, behavior: 'smooth' }); }, 80);
+      },
+      zoneOptions, itemStatusOptions: statusOptions.filter(o => !(this.META[o.value] || {}).hazard), zoneCount: zones.length, columns, rows: rowsOut, resultCount, empty: resultCount === 0,
       hasDup, dupMsg,
       showConfirm: !!this.state.confirmClear,
       confirmLoc: this.shortLoc(this.state.confirmClear),
