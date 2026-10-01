@@ -109,10 +109,11 @@ producing a corrupt file.
 
 ### Overflow lanes (multi-order rows)
 
-- `ZL4OVRFLW01–10` and `ZL4OVRFLWSTK01–10` are seeded in `src/data.js` with
-  `zone: "Overflow"` and `multi: true`. They share one Overflow card on the map
-  (stack lanes show `S01–S10`) and sit under a collapsible Overflow header at the
-  bottom of the table.
+- 10 lanes are seeded in `src/data.js` with `zone: "Overflow"` and `multi: true`,
+  paired like the zone locations: BTS `ZL4OVRFLW01–10` ↔ OT (stock)
+  `ZL4OVRFLWSTK01–10`. Edits are keyed by the OT code. They share one Overflow
+  card on the map and sit under a collapsible Overflow header at the bottom of
+  the table.
 - Each lane holds many orders in `edits.items`, a JSON string of
   `[{wo, serial, lpn, status, date}]`, so sync, backups, restore and wipe treat
   it as one text field. Expand a lane to add, edit or remove orders.
