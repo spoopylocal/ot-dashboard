@@ -34,8 +34,11 @@ class Component extends DCLogic {
       const y = window.scrollY || document.documentElement.scrollTop || 0;
       const show = y > 400;
       if (show !== this.state.scrolled) this.setState({ scrolled: show });
+      this._checkOvInView();
     };
     window.addEventListener('scroll', this._onScroll, { passive: true });
+    window.addEventListener('resize', this._onScroll, { passive: true });
+    setTimeout(() => this._checkOvInView(), 600);
     try { const dm = localStorage.getItem('ot-tracker-darkmode'); if (dm !== null) this.setState({ dark: dm === '1' }); } catch (e) {}
     try { if (localStorage.getItem('ot-overflow-collapsed') === '1') this.setState({ ovCollapsed: true }); } catch (e) {}
     // Hidden admin panel: Shift+B anywhere outside a form field.
@@ -59,7 +62,7 @@ class Component extends DCLogic {
     if (this._sbChannel) this._sb.removeChannel(this._sbChannel);
     if (this._presence) this._sb.removeChannel(this._presence);
     clearInterval(this._expireTimer);
-    if (this._onScroll) window.removeEventListener('scroll', this._onScroll);
+    if (this._onScroll) { window.removeEventListener('scroll', this._onScroll); window.removeEventListener('resize', this._onScroll); }
     if (this._onKeyDown) window.removeEventListener('keydown', this._onKeyDown);
     if (this._onVisible) document.removeEventListener('visibilitychange', this._onVisible);
     if (this._onFocus) window.removeEventListener('focus', this._onFocus);
@@ -153,6 +156,22 @@ class Component extends DCLogic {
     this._setItems(ot, this._items(this._rawRec(ot)).concat([{ wo: '', serial: '', lpn: '', status: '', date: '' }]));
     this.setState(s => ({ openRows: { ...s.openRows, [ot]: true } }));
   }
+  // Floating Overflow button hides while any of the Overflow section (header
+  // through the last lane, which end the table) is on screen.
+  _checkOvInView() {
+    let inView = false;
+    try {
+      const h = document.getElementById('ot-overflow-head');
+      if (h) {
+        const top = h.getBoundingClientRect().top;
+        const t = h.closest('table');
+        const bottom = t ? t.getBoundingClientRect().bottom : top + 60;
+        inView = top < window.innerHeight - 40 && bottom > 60;
+      }
+    } catch (e) {}
+    if (inView !== !!this.state.ovInView) this.setState({ ovInView: inView });
+  }
+  _ovRecheck() { clearTimeout(this._ovChk); this._ovChk = setTimeout(() => this._checkOvInView(), 120); }
   _itemRemove(ot, i) { const items = this._items(this._rawRec(ot)); items.splice(i, 1); this._setItems(ot, items); }
   // Row color = its most urgent order; empty lines never outrank real ones.
   ITEM_RANK = { 'Issue/Hold': 0, 'In Progress': 1, 'WO entered': 3, 'BTS Completed': 4, 'OT Completed': 5, 'Pending': 9 };
@@ -1123,6 +1142,7 @@ class Component extends DCLogic {
     return Array.isArray(f) ? (f.indexOf(s) !== -1) : (f === s);
   }
   _toggleStatus(s, additive) {
+    this._ovRecheck();
     this.setState(st => {
       const cur = st.statusFilter;
       const arr = (cur === 'all') ? [] : (Array.isArray(cur) ? cur.slice() : [cur]);
@@ -1563,7 +1583,8 @@ class Component extends DCLogic {
     const hazKey = (this._statusList().find(s => s.hazard) || {}).key || 'DO NOT USE';
     const fieldsList = this._fields();
     const HL = 'animation:ot-hl-blink 1s ease-in-out 5;';
-    const hit = (v) => !!(this.state.hlOn && q && (v || '').toString().toLowerCase().includes(q));
+    const hitQ = (v, k) => !!(k && (v || '').toString().toLowerCase().includes(k));
+    const hit = (v) => !!(this.state.hlOn && hitQ(v, q));
     const rowsOut = rows.map((r, ri) => {
       const m = this.metaFor(r.status);
       const isSel = r.ot === selKey;
@@ -1594,7 +1615,7 @@ class Component extends DCLogic {
         const val = (r[f.key] == null ? '' : r[f.key]).toString();
         const onCopy = (e) => { if (e) e.preventDefault(); const v = val.trim(); if (v) this._copy(v, e); };
         const bdr = 'border-bottom:1px solid var(--line-soft);';
-        const hl = hit(val) ? HL : '';
+        const hl = hit(val, r.multi) ? HL : '';
         if (r.multi && f.type !== 'location' && f.type !== 'zone') {
           const n = r._count || 0, em = this.META[this.eff(r)];
           const text = f.key === 'wo' ? (open ? '▾ ' : '▸ ') + n + ' order' + (n === 1 ? '' : 's')
@@ -1636,7 +1657,7 @@ class Component extends DCLogic {
       const orders = open ? (r._items || []).map((it, i) => {
         const im = this.metaFor(it.status), idark = this.norm(it.status) !== 'Pending';
         const inp = (k) => ({ val: it[k] || '', onChange: (e) => this._itemEdit(r.ot, i, k, e.target.value),
-          style: iStyle(!!(dupCounts[k] && isDupVal(dupCounts[k], it[k]))) + (hit(it[k]) ? HL : '') });
+          style: iStyle(!!(dupCounts[k] && isDupVal(dupCounts[k], it[k]))) + (hit(it[k], true) ? HL : '') });
         const d0 = (it.date || '').trim();
         const iIssue = this.norm(it.status) === 'Issue/Hold';
         return { num: i + 1, wo: inp('wo'), serial: inp('serial'), lpn: inp('lpn'), lock: dnu,
@@ -1650,12 +1671,8 @@ class Component extends DCLogic {
           onDateMenu: (e) => { e.preventDefault(); if (dnu) return; const n = new Date(); let y = n.getFullYear(), mm = n.getMonth(); const p = d0.split('/'); if (p.length === 3) { mm = (+p[0]) - 1; y = +p[2]; } this.setState({ datePicker: { ot: r.ot, item: i, bts: r.bts + ' · order ' + (i + 1), y, m: mm, current: d0 } }); },
           onRemove: () => { if (!dnu) this._itemRemove(r.ot, i); } };
       }) : [];
-      const sectionHead = !!(r.multi && !sk && (ri === 0 || !rows[ri - 1].multi));
       const ovHidden = !!(r.multi && this.state.ovCollapsed && !q);
-      return { ot: r.ot, cells, open, orders, noOrders: open && !r._count, addLock: dnu, sectionHead, showRow: !ovHidden,
-        ovToggleLabel: this.state.ovCollapsed && !q ? '▸ Expand' : '▾ Collapse',
-        onOvToggle: () => this.setState(s => { const v = !s.ovCollapsed; try { localStorage.setItem('ot-overflow-collapsed', v ? '1' : '0'); } catch (e) {} return { ovCollapsed: v }; }),
-        sectionLabel: sectionHead ? rows.filter(x => x.multi).length + ' lanes · ' + rows.filter(x => x.multi).reduce((n, x) => n + (x._count || 0), 0) + ' orders' : '',
+      return { ot: r.ot, multi: !!r.multi, cells, open, orders, noOrders: open && !r._count, addLock: dnu, showRow: !ovHidden,
         onAddOrder: () => { if (!dnu) this._itemAdd(r.ot); },
         // "Do not use" — caution-button toggle, hazard-striped row, locked fields.
         dnuLock: dnu,
@@ -1678,6 +1695,15 @@ class Component extends DCLogic {
           : `background:${isSel ? 'var(--sel-bg)' : (ri % 2 ? 'var(--surface-2)' : 'var(--surface)')};transition:background 120ms;` };
     });
 
+    const allLanes = recs.filter(x => x.multi).length;
+    if (!sk && allLanes) {
+      const ovRows = rows.filter(x => x.multi), at = rowsOut.findIndex(x => x.multi);
+      rowsOut.splice(at < 0 ? rowsOut.length : at, 0, { ot: '__ovhead', sectionHead: true, showRow: false, open: false, cells: [], orders: [],
+        sectionLabel: (ovRows.length === allLanes ? allLanes : ovRows.length + ' of ' + allLanes) + ' lanes · ' + ovRows.reduce((n, x) => n + (x._count || 0), 0) + ' orders',
+        ovNoMatch: !ovRows.length,
+        ovToggleLabel: this.state.ovCollapsed && !q ? '▸ Expand' : '▾ Collapse',
+        onOvToggle: () => this.setState(s => { const v = !s.ovCollapsed; try { localStorage.setItem('ot-overflow-collapsed', v ? '1' : '0'); } catch (e) {} this._ovRecheck(); return { ovCollapsed: v }; }) });
+    }
     const columns = fieldsList.map(f => ({
       label: f.label, arrow: this.state.sortKey === f.key ? (this.state.sortDir === 1 ? ' ↑' : ' ↓') : '',
       title: 'Click to sort · Right-click to copy this column',
@@ -1724,7 +1750,7 @@ class Component extends DCLogic {
       noDiceEmoji: (this.state.noDice || '').indexOf('obstructed') > -1 ? '🚧' : '🎲',
       onNoDiceClose: () => this.setState({ noDice: null }),
       hasQuery: (this.state.query || '').length > 0,
-      onClearSearch: () => { clearTimeout(this._hlTimer); this.setState({ query: '', hlOn: false }); },
+      onClearSearch: () => { clearTimeout(this._hlTimer); this.setState({ query: '', hlOn: false }); this._ovRecheck(); },
       showDatePicker: !!datePickerView,
       datePicker: datePickerView,
       kpis, tabs, legend, racks, sel,
@@ -1732,19 +1758,22 @@ class Component extends DCLogic {
       query: this.state.query, zoneFilter: this.state.zoneFilter,
       // Matched values blink 5 times (5s) once typing pauses (re-arms on each new search).
       onSearch: (e) => {
-        this.setState({ query: e.target.value, hlOn: false });
+        const id = e.target.id, pos = e.target.selectionStart;
+        this.setState({ query: e.target.value, hlOn: false }); this._ovRecheck();
+        if (id === 'ot-ov-search') requestAnimationFrame(() => { const el = document.getElementById(id); if (el && document.activeElement !== el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (x) {} } });
         clearTimeout(this._hlTimer); clearTimeout(this._hlOff);
         this._hlTimer = setTimeout(() => { this.setState({ hlOn: true }); this._hlOff = setTimeout(() => this.setState({ hlOn: false }), 5100); }, 450);
       },
-      onZone: (e) => this.setState({ zoneFilter: e.target.value }),
+      onZone: (e) => { this.setState({ zoneFilter: e.target.value }); this._ovRecheck(); },
       onBarLeave: () => this.setState({ barHover: null }),
       // Floating "Overflow" button: open the section, clear whatever hides it, then scroll to its header.
       onOverflowJump: () => {
-        const hidden = !rowsOut.some(r => r.sectionHead);
+        const hidden = !!sk || !rows.some(x => x.multi);
         try { localStorage.setItem('ot-overflow-collapsed', '0'); } catch (e) {}
         this.setState(hidden ? { ovCollapsed: false, sortKey: null, query: '', zoneFilter: 'all', statusFilter: 'all', hlOn: false } : { ovCollapsed: false });
         setTimeout(() => { const el = document.getElementById('ot-overflow-head'); if (!el) return; window.scrollTo({ top: el.getBoundingClientRect().top + (window.scrollY || 0) - 90, behavior: 'smooth' }); }, 80);
       },
+      ovJumpStyle: `position:fixed;bottom:26px;left:26px;z-index:35;transition:opacity 220ms,transform 220ms;${this.state.ovInView ? 'opacity:0;transform:translateY(12px);pointer-events:none;' : 'opacity:1;transform:none;'}`,
       zoneOptions, itemStatusOptions: statusOptions.filter(o => !(this.META[o.value] || {}).hazard), zoneCount: zones.length, columns, rows: rowsOut, resultCount, empty: resultCount === 0,
       hasDup, dupMsg,
       showConfirm: !!this.state.confirmClear,

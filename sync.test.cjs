@@ -181,7 +181,7 @@ test('search finds orders inside overflow rows and opens them', () => {
   app._seedRecords = [{ ot: 'A', bts: 'A', zone: '0100', wo: '' }, { ot: 'ZL4OVRFLW01', bts: 'ZL4OVRFLW01', zone: 'Overflow', multi: true }];
   app._edits = { ZL4OVRFLW01: { items: JSON.stringify([{ wo: 'WO-77', serial: 'SN-9', lpn: 'LP-5', status: 'Issue/Hold' }]) } };
   app.state.data = { records: app._composeRecords() };
-  const rows = (q, extra) => { Object.assign(app.state, { query: q, ovCollapsed: false, openRows: {} }, extra); return app.renderVals().rows; };
+  const rows = (q, extra) => { Object.assign(app.state, { query: q, ovCollapsed: false, openRows: {} }, extra); return app.renderVals().rows.filter(r => !r.sectionHead); };
   for (const q of ['wo-77', 'SN-9', 'lp-5', 'ovrflw01']) assert.equal(rows(q).map(r => r.ot).join(), 'ZL4OVRFLW01', q);
   assert.equal(rows('WO-77')[0].open, true);
   assert.equal(rows('WO-77', { ovCollapsed: true })[0].showRow, true);
@@ -197,12 +197,13 @@ test('search highlights matching values only while armed', () => {
   app._edits = { ZL4OVRFLW01: { items: JSON.stringify([{ wo: 'WO-1B', serial: 'SN-1' }]) } };
   app.state.data = { records: app._composeRecords() };
   Object.assign(app.state, { query: 'wo-1', openRows: {}, hlOn: true });
-  let rs = app.renderVals().rows;
+  const real = () => app.renderVals().rows.filter(r => !r.sectionHead);
+  let rs = real();
   assert.match(rs[0].cells.find(c => c.key === 'wo').inputStyle, /ot-hl-blink/);
   assert.match(rs[1].orders[0].wo.style, /ot-hl-blink/);
   assert.doesNotMatch(rs[1].orders[0].serial.style, /ot-hl-blink/);
   app.state.hlOn = false;
-  rs = app.renderVals().rows;
+  rs = real();
   assert.doesNotMatch(rs[0].cells.find(c => c.key === 'wo').inputStyle, /ot-hl-blink/);
 });
 test('Overflow jump button opens the section and clears filters hiding it', () => {
@@ -215,4 +216,37 @@ test('Overflow jump button opens the section and clears filters hiding it', () =
   Object.assign(app.state, { query: 'OVRFLW', ovCollapsed: true });
   app.renderVals().onOverflowJump();
   assert.equal(app.state.query, 'OVRFLW'); assert.equal(app.state.ovCollapsed, false);
+});
+test('Overflow button hides while the section is on screen', () => {
+  const { app, context } = setup();
+  let rect = { top: 300 }, tableBottom = 900;
+  context.window = { innerHeight: 800 };
+  context.document.getElementById = (id) => id === 'ot-overflow-head' ? { getBoundingClientRect: () => rect, closest: () => ({ getBoundingClientRect: () => ({ bottom: tableBottom }) }) } : null;
+  app._checkOvInView(); assert.equal(app.state.ovInView, true);
+  assert.match(app.renderVals().ovJumpStyle, /opacity:0/);
+  rect = { top: 1200 }; tableBottom = 2000; app._checkOvInView(); assert.equal(app.state.ovInView, false);   // below the fold
+  rect = { top: -900 }; tableBottom = 20; app._checkOvInView(); assert.equal(app.state.ovInView, false);    // scrolled past
+  context.document.getElementById = () => null; app._checkOvInView(); assert.equal(app.state.ovInView, false); // filtered out
+  assert.match(app.renderVals().ovJumpStyle, /opacity:1/);
+});
+test('overflow header mirrors the top search and never disappears', () => {
+  const { app } = setup();
+  app._seedRecords = [{ ot: 'A', bts: 'A', zone: '0100', wo: 'WO-1' }, { ot: 'ZL4OVRFLW01', bts: 'ZL4OVRFLW01', zone: 'Overflow', multi: true }, { ot: 'ZL4OVRFLW02', bts: 'ZL4OVRFLW02', zone: 'Overflow', multi: true }];
+  app._edits = { ZL4OVRFLW02: { items: JSON.stringify([{ wo: 'WO-1B' }]) } };
+  app.state.data = { records: app._composeRecords() };
+  const view = (patch) => { Object.assign(app.state, { query: '', zoneFilter: 'all', sortKey: null, openRows: {} }, patch); return app.renderVals(); };
+  let v = view({ query: 'wo-1b' });
+  assert.equal(v.rows.map(r => r.ot).join(), '__ovhead,ZL4OVRFLW02');
+  assert.equal(v.rows[0].sectionLabel, '1 of 2 lanes · 1 orders');
+  assert.equal(v.rows[1].open, true);
+  v = view({ query: 'WO-1' });                      // matches normal row + lane order
+  assert.equal(v.rows.map(r => r.ot).join(), 'A,__ovhead,ZL4OVRFLW02');
+  v = view({ zoneFilter: '0100' });                 // filter hides every lane: header stays
+  assert.equal(v.rows.map(r => r.ot).join(), 'A,__ovhead');
+  assert.equal(v.rows[1].ovNoMatch, true);
+  assert.equal(v.resultCount, 1);
+  v = view({ sortKey: 'wo' });                      // column sort: no header
+  assert.ok(v.rows.every(r => !r.sectionHead));
+  v.onSearch({ target: { value: 'X', id: 'ot-search' } });
+  assert.equal(app.state.query, 'X');
 });
