@@ -260,39 +260,25 @@ function laneApp(items, lanes) {
   const row = () => app.renderVals().rows.find(r => r.ot === 'ZL4OVRFLWSTK04');
   return { ...t, row };
 }
-test('existing orders (no lane) land in one unassigned group, untouched', () => {
-  const { app, row } = laneApp([{ wo: 'A1' }, { wo: 'A2', status: 'BTS Completed' }]);
+test('every overflow location shows Lane 1 and Lane 2; existing orders count as Lane 1 untouched', () => {
+  const { app, row } = laneApp([{ wo: 'A1' }, { wo: 'A2', status: 'BTS Completed', g: 'g0' }]);
   const g = row().groups;
-  assert.equal(g.length, 1); assert.equal(g[0].laneVal, ''); assert.equal(g[0].orders.map(o => o.wo.val).join(), 'A1,A2');
-  assert.equal(app._edits.ZL4OVRFLWSTK04.lanes, undefined);            // nothing written just by viewing
-  assert.equal(app._items(app._edits.ZL4OVRFLWSTK04).length, 2);
+  assert.equal(g.map(x => x.laneLabel).join(), 'Lane 1,Lane 2');
+  assert.equal(g[0].orders.map(o => o.wo.val).join(), 'A1,A2'); assert.equal(g[1].orders.length, 0); assert.equal(g[1].empty, true);
+  assert.equal(JSON.stringify(app._items(app._edits.ZL4OVRFLWSTK04)), JSON.stringify([{ wo: 'A1' }, { wo: 'A2', status: 'BTS Completed', g: 'g0' }]));  // not rewritten
+  assert.match(row().cells.find(c => c.key === 'wo').text, /2 orders · L1: 2 · L2: 0/);
 });
-test('lanes: pick 1/2 once per location, new lane, add order into a lane, empty-only removal', () => {
+test('adding into Lane 2 keeps it there; edits keep the lane; detail card shows lanes', () => {
   const { app, row } = laneApp([{ wo: 'A1' }]);
-  let g = row().groups;
-  g[0].onLane({ target: { value: '1' } });
-  row().onNewLane();
-  g = row().groups;
-  assert.equal(g.length, 2);
-  assert.deepEqual(g[1].laneOptions.map(o => o.value).join(), ',2');   // Lane 1 already used
-  g[1].onLane({ target: { value: '1' } });                             // blocked duplicate
-  assert.equal(row().groups[1].laneVal, '');
-  g[1].onLane({ target: { value: '2' } });
   row().groups[1].onAddOrder();
-  app._itemEdit('ZL4OVRFLWSTK04', 1, 'wo', 'B1');
-  g = row().groups;
-  assert.equal(g[0].orders.map(o => o.wo.val).join(), 'A1'); assert.equal(g[1].orders.map(o => o.wo.val).join(), 'B1');
-  assert.equal(g[1].orders[0].num, 1);
-  assert.equal(g[1].canRemove, false);                                 // has an order -> can't remove
-  assert.match(row().cells.find(c => c.key === 'wo').text, /2 orders · L1: 1 · L2: 1/);
+  app._itemEdit('ZL4OVRFLWSTK04', 1, 'wo', 'B1'); app._itemEdit('ZL4OVRFLWSTK04', 1, 'status', 'In Progress');
+  const g = row().groups;
+  assert.equal(g[0].orders.map(o => o.wo.val).join(), 'A1'); assert.equal(g[1].orders.map(o => o.wo.val).join(), 'B1'); assert.equal(g[1].orders[0].num, 1);
+  assert.equal(app._items(app._edits.ZL4OVRFLWSTK04)[1].g, 'L2');
+  row().groups[0].onAddOrder(); assert.equal(app._items(app._edits.ZL4OVRFLWSTK04)[2].g, 'L1');
   app.state.sel = { ot: 'ZL4OVRFLWSTK04' };
   const dv = app.renderVals().sel.fields.map(f => f.k + '=' + f.v).join('|');
-  assert.match(dv, /A1=L1 · WO entered/); assert.match(dv, /B1=L2 · WO entered/);
-  row().onNewLane(); assert.equal(row().groups[2].canRemove, true);
-  row().groups[2].onRemoveLane(); assert.equal(row().groups.length, 2);
-  row().groups[1].onLane({ target: { value: '' } });                   // empty option back
-  assert.equal(row().groups[1].laneVal, '');
-  assert.equal(app._items(app._edits.ZL4OVRFLWSTK04).length, 2);       // no orders lost along the way
+  assert.match(dv, /A1=L1 · WO entered/); assert.match(dv, /B1=L2 · In Progress/);
 });
 test('removing an order asks first, then can be restored in place within 60s', () => {
   const { app, row, timers } = laneApp([{ wo: 'A1' }, { wo: 'A2' }, { wo: 'A3' }]);
@@ -308,12 +294,14 @@ test('removing an order asks first, then can be restored in place within 60s', (
   assert.equal(row().groups[0].removed.length, 0);
   assert.ok([...timers.values()].some(t => t.ms === 60000));            // undo window expires after 60s
 });
-test('lanes are backed up and cleared/restored with the row', () => {
-  const { app, row } = laneApp([{ wo: 'A1', g: 'gx' }], [{ id: 'gx', lane: '2' }]);
-  assert.equal(app._canonSnapshot().ZL4OVRFLWSTK04.lanes, JSON.stringify([{ id: 'gx', lane: '2' }]));
-  assert.match(app.renderVals().confirmText || '', /./);
-  app.clearRow('ZL4OVRFLWSTK04');
-  assert.equal(app._edits.ZL4OVRFLWSTK04.lanes, ''); assert.equal(app._edits.ZL4OVRFLWSTK04.items, '');
-  app.restoreRow('ZL4OVRFLWSTK04');
-  assert.equal(row().groups[0].laneVal, '2'); assert.equal(row().groups[0].orders[0].wo.val, 'A1');
+test('trash can is disabled on overflow rows only; lane survives backup', () => {
+  const t = setup(); const { app } = t;
+  app._seedRecords = [{ ot: 'NA1L4OT0101', bts: 'ZL4BTS0101', zone: '0100' }, { ot: 'ZL4OVRFLWSTK04', bts: 'ZL4OVRFLW04', zone: 'Overflow', multi: true }];
+  app._edits = { ZL4OVRFLWSTK04: { items: JSON.stringify([{ wo: 'B1', g: 'L2' }]) } };
+  app.state.data = { records: app._composeRecords() };
+  const rows = app.renderVals().rows, ov = rows.find(r => r.ot === 'ZL4OVRFLWSTK04'), nr = rows.find(r => r.ot === 'NA1L4OT0101');
+  assert.equal(ov.clearLock, true); assert.equal(ov.clearOk, false); assert.match(ov.clearTitle, /one at a time/);
+  ov.onClearRow(); assert.equal(app.state.confirmClear || null, null);
+  assert.equal(nr.clearOk, true); nr.onClearRow(); assert.equal(app.state.confirmClear, 'NA1L4OT0101');
+  assert.match(app._canonSnapshot().ZL4OVRFLWSTK04.items, /"g":"L2"/);
 });
