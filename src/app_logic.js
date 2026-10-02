@@ -1,6 +1,6 @@
 
 class Component extends DCLogic {
-  state = { data: null, tab: 'tracker', query: '', zoneFilter: 'all', statusFilter: 'all', sortKey: null, sortDir: 1, sel: null, dark: false, barHover: null, cleared: {}, clearedAt: {}, now: 0, confirmClear: null, scrolled: false, noteEdit: null, noteText: '', noDice: null, noteHover: null, datePicker: null, copied: null, openRows: {}, admin: null, viewers: 1, live: 'connecting', saveStatus: '' };
+  state = { data: null, tab: 'tracker', query: '', zoneFilter: 'all', statusFilter: 'all', sortKey: null, sortDir: 1, sel: null, dark: false, barHover: null, cleared: {}, clearedAt: {}, now: 0, confirmClear: null, scrolled: false, noteEdit: null, noteText: '', noDice: null, noteHover: null, datePicker: null, copied: null, openRows: {}, confirmItem: null, removedItems: {}, admin: null, viewers: 1, live: 'connecting', saveStatus: '' };
 
   componentDidMount() {
     const src = window.__OT_DATA ? Promise.resolve(window.__OT_DATA) : fetch('ot_data.json').then(r => r.json());
@@ -102,7 +102,7 @@ class Component extends DCLogic {
   // Fields whose values are stored per-location in the edits object and captured
   // by version backups: the editable columns (minus location/zone) plus the
   // always-present "note" (which is edited via its own modal, not a column).
-  _bkFields() { return this._dataFields().map(f => f.key).concat('note', 'items'); }
+  _bkFields() { return this._dataFields().map(f => f.key).concat('note', 'items', 'lanes'); }
   cfg = null;
   _defaultConfig() {
     return { statuses: this.DEFAULT_STATUSES.map(s => ({ ...s })),
@@ -152,8 +152,8 @@ class Component extends DCLogic {
     items[i] = { ...items[i], [field]: value };
     this._setItems(ot, items);
   }
-  _itemAdd(ot) {
-    this._setItems(ot, this._items(this._rawRec(ot)).concat([{ wo: '', serial: '', lpn: '', status: '', date: '' }]));
+  _itemAdd(ot, gid) {
+    this._setItems(ot, this._items(this._rawRec(ot)).concat([{ wo: '', serial: '', lpn: '', status: '', date: '', g: gid || 'g0' }]));
     this.setState(s => ({ openRows: { ...s.openRows, [ot]: true } }));
   }
   // Floating Overflow button hides while any of the Overflow section (header
@@ -173,6 +173,51 @@ class Component extends DCLogic {
   }
   _ovRecheck() { clearTimeout(this._ovChk); this._ovChk = setTimeout(() => this._checkOvInView(), 120); }
   _itemRemove(ot, i) { const items = this._items(this._rawRec(ot)); items.splice(i, 1); this._setItems(ot, items); }
+  // Order removal mirrors row clearing: confirm first, then 60s to restore it in place.
+  _itemRemoveConfirmed(ot, i) {
+    const items = this._items(this._rawRec(ot)), item = items[i];
+    if (!item) { this.setState({ confirmItem: null }); return; }
+    items.splice(i, 1); this._setItems(ot, items);
+    const at = Date.now(), key = ot + ':' + at + ':' + i;
+    this.setState(s => ({ confirmItem: null, now: at, removedItems: { ...s.removedItems, [ot]: [...((s.removedItems || {})[ot] || []), { key, item, index: i, at }] } }));
+    setTimeout(() => this.setState(s => ({ removedItems: { ...s.removedItems, [ot]: ((s.removedItems || {})[ot] || []).filter(x => x.key !== key) } })), 60000);
+    this._startTick();
+  }
+  _itemRestore(ot, key) {
+    const rec = ((this.state.removedItems || {})[ot] || []).find(x => x.key === key);
+    if (!rec) return;
+    const items = this._items(this._rawRec(ot));
+    items.splice(Math.min(rec.index, items.length), 0, rec.item); this._setItems(ot, items);
+    this.setState(s => ({ removedItems: { ...s.removedItems, [ot]: ((s.removedItems || {})[ot] || []).filter(x => x.key !== key) } }));
+  }
+  // Lane groups (edits.lanes, JSON [{id, lane}]); orders point at a group via
+  // item.g. Orders saved before lanes existed have no g -> group 'g0' (no lane).
+  _lanes(r) { try { const a = JSON.parse((r && r.lanes) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+  _groups(r) {
+    const gs = this._lanes(r).map(g => ({ id: g.id, lane: g.lane || '' }));
+    const seen = new Set(gs.map(g => g.id));
+    this._items(r).forEach(it => { const id = it.g || 'g0'; if (!seen.has(id)) { seen.add(id); gs.push({ id, lane: '' }); } });
+    if (!gs.length) gs.push({ id: 'g0', lane: '' });
+    return gs;
+  }
+  _setLanes(ot, gs) { this.updateField(ot, 'lanes', JSON.stringify(gs.map(g => ({ id: g.id, lane: g.lane || '' })))); }
+  _laneSet(ot, gid, lane) {
+    const gs = this._groups(this._rawRec(ot));
+    if (lane && gs.some(g => g.id !== gid && g.lane === lane)) return;   // one group per lane number
+    gs.forEach(g => { if (g.id === gid) g.lane = lane; });
+    this._setLanes(ot, gs);
+  }
+  _laneAdd(ot) {
+    const gs = this._groups(this._rawRec(ot));
+    gs.push({ id: 'g' + Date.now().toString(36), lane: '' });
+    this._setLanes(ot, gs);
+    this.setState(s => ({ openRows: { ...s.openRows, [ot]: true } }));
+  }
+  _laneRemove(ot, gid) {
+    const r = this._rawRec(ot);
+    if (this._items(r).some(it => (it.g || 'g0') === gid)) return;      // never drops orders
+    this._setLanes(ot, this._groups(r).filter(g => g.id !== gid));
+  }
   // Row color = its most urgent order; empty lines never outrank real ones.
   ITEM_RANK = { 'Issue/Hold': 0, 'In Progress': 1, 'WO entered': 3, 'BTS Completed': 4, 'OT Completed': 5, 'Pending': 9 };
   _multiView(r) {
@@ -638,7 +683,7 @@ class Component extends DCLogic {
     try { this._presence.send({ type: 'broadcast', event: 'editing', payload: { ot: ot, field: field || '' } }); } catch (e) {}
   }
   _fieldLabel(f) {
-    return ({ wo: 'WO', serial: 'Serial', lpn: 'LPN', status: 'Status', date: 'Date', note: 'Note', items: 'Orders' })[f] || 'this row';
+    return ({ wo: 'WO', serial: 'Serial', lpn: 'LPN', status: 'Status', date: 'Date', note: 'Note', items: 'Orders', lanes: 'Lanes' })[f] || 'this row';
   }
 
   // === Versioned backups ================================================
@@ -783,7 +828,7 @@ class Component extends DCLogic {
         const from = (c[f] || '').toString().trim();    // current value (now)
         if (from === to) return;
         const change = !from ? 'add' : (!to ? 'remove' : 'change');
-        const show = (x) => f === 'items' && x ? this._items({ items: x }).map(it => it.wo || '?').join(', ') : (x || '—');
+        const show = (x) => !x ? '—' : f === 'items' ? this._items({ items: x }).map(it => it.wo || '?').join(', ') : f === 'lanes' ? this._lanes({ lanes: x }).map(g => g.lane ? 'L' + g.lane : '—').join(', ') : x;
         fields.push({ label: this._fieldLabel(f), from, to, change,
           fromShow: show(from), toShow: show(to) });
       });
@@ -1174,8 +1219,8 @@ class Component extends DCLogic {
   clearRow(ot) {
     const snapshot = {};
     const cur = this.state.data.records.find(r => r.ot === ot) || {};
-    ['wo','serial','lpn','status','date','items'].forEach(f => { snapshot[f] = cur[f] || ''; });
-    const fields = { wo: '', serial: '', lpn: '', status: '', date: '', items: '' };
+    ['wo','serial','lpn','status','date','items','lanes'].forEach(f => { snapshot[f] = cur[f] || ''; });
+    const fields = { wo: '', serial: '', lpn: '', status: '', date: '', items: '', lanes: '' };
     snapshot.note = cur.note || '';
     fields.note = '';
     // One write for the whole clear (was one upsert per field — six racing
@@ -1195,8 +1240,14 @@ class Component extends DCLogic {
     this._restoreTimers[ot] = setTimeout(() => {
       this.setState(s => { const cleared = { ...s.cleared }; delete cleared[ot]; const clearedAt = { ...s.clearedAt }; delete clearedAt[ot]; return { cleared, clearedAt }; });
     }, 60000);
-    if (!this._tick) this._tick = setInterval(() => {
-      if (Object.keys(this.state.cleared).length === 0) { clearInterval(this._tick); this._tick = null; return; }
+    this._startTick();
+  }
+  // 1s countdown for every 60s undo (cleared rows + removed orders).
+  _startTick() {
+    if (this._tick) return;
+    this._tick = setInterval(() => {
+      const anyRemoved = Object.values(this.state.removedItems || {}).some(l => l.length);
+      if (!Object.keys(this.state.cleared).length && !anyRemoved) { clearInterval(this._tick); this._tick = null; return; }
       this.setState({ now: Date.now() });
     }, 1000);
   }
@@ -1524,7 +1575,7 @@ class Component extends DCLogic {
           { k: 'BTS location', v: sr.bts || '—', mono: 'var(--font-mono)' },
           { k: 'Zone', v: sr.zone, mono: 'var(--font-mono)' },
           { k: 'Orders', v: String(sr._count || 0), mono: 'var(--font-mono)' },
-          ...(sr._items || []).map(it => ({ k: (it.wo || '').trim() || '(no WO)', v: this.META[this.eff(it)].label, mono: 'var(--font-mono)' })),
+          ...(() => { const ln = {}; this._groups(sr).forEach(g => { ln[g.id] = g.lane; }); return (sr._items || []).map(it => { const l = ln[it.g || 'g0']; return { k: (it.wo || '').trim() || '(no WO)', v: (l ? 'L' + l + ' · ' : '') + this.META[this.eff(it)].label, mono: 'var(--font-mono)' }; }); })(),
         ] : [
           { k: 'OT location', v: sr.ot || '—', mono: 'var(--font-mono)' },
           { k: 'BTS location', v: sr.bts || '—', mono: 'var(--font-mono)' },
@@ -1619,7 +1670,8 @@ class Component extends DCLogic {
         const hl = hit(val, r.multi) ? HL : '';
         if (r.multi && f.type !== 'location' && f.type !== 'zone') {
           const n = r._count || 0, em = this.META[this.eff(r)];
-          const text = f.key === 'wo' ? (open ? '▾ ' : '▸ ') + n + ' order' + (n === 1 ? '' : 's')
+          const gsR = this._groups(r), laneSum = gsR.some(g => g.lane) ? gsR.map(g => { const c = (r._items || []).filter(it => (it.g || 'g0') === g.id).length; return c ? (g.lane ? 'L' + g.lane : 'No lane') + ': ' + c : ''; }).filter(Boolean).join(' · ') : '';
+          const text = f.key === 'wo' ? (open ? '▾ ' : '▸ ') + n + ' order' + (n === 1 ? '' : 's') + (laneSum ? ' · ' + laneSum : '')
             : f.type === 'status' ? '—'
             : (f.key === 'serial' || f.key === 'lpn') ? (r._items || []).filter(it => (it[f.key] || '').trim()).length + ' / ' + n
             : '—';
@@ -1670,10 +1722,28 @@ class Component extends DCLogic {
           onDateSet: () => { if (!dnu) this._itemEdit(r.ot, i, 'date', this.todayStr()); },
           onDateClear: () => { if (!dnu) this._itemEdit(r.ot, i, 'date', ''); },
           onDateMenu: (e) => { e.preventDefault(); if (dnu) return; const n = new Date(); let y = n.getFullYear(), mm = n.getMonth(); const p = d0.split('/'); if (p.length === 3) { mm = (+p[0]) - 1; y = +p[2]; } this.setState({ datePicker: { ot: r.ot, item: i, bts: r.bts + ' · order ' + (i + 1), y, m: mm, current: d0 } }); },
-          onRemove: () => { if (!dnu) this._itemRemove(r.ot, i); } };
+          gid: it.g || 'g0',
+          onRemove: () => { if (!dnu) this.setState({ confirmItem: { ot: r.ot, i, wo: (it.wo || '').trim(), bts: r.bts } }); } };
       }) : [];
       const ovHidden = !!(r.multi && this.state.ovCollapsed && !q);
-      return { ot: r.ot, multi: !!r.multi, cells, open, orders, noOrders: open && !r._count, addLock: dnu, showRow: !ovHidden,
+      const LANE_OPTS = [{ value: '', label: '—' }, { value: '1', label: 'Lane 1' }, { value: '2', label: 'Lane 2' }];
+      const gsAll = open ? this._groups(r) : [];
+      const groups = gsAll.map(g => {
+        const others = new Set(gsAll.filter(x => x.id !== g.id && x.lane).map(x => x.lane));
+        const gOrders = orders.filter(o => o.gid === g.id).map((o, k) => ({ ...o, num: k + 1 }));
+        const removed = ((this.state.removedItems || {})[r.ot] || []).filter(x => (x.item.g || 'g0') === g.id).map(x => ({
+          label: (x.item.wo || '').trim() || '(no WO)', secs: Math.max(0, Math.ceil((60000 - ((this.state.now || Date.now()) - x.at)) / 1000)),
+          onRestore: () => this._itemRestore(r.ot, x.key) }));
+        return { id: g.id, laneVal: g.lane, laneOptions: LANE_OPTS.filter(o => !o.value || o.value === g.lane || !others.has(o.value)),
+          onLane: (e) => { if (!dnu) this._laneSet(r.ot, g.id, e.target.value); }, lock: dnu,
+          laneSelStyle: `appearance:auto;height:30px;padding:0 8px;border-radius:4px;font-family:var(--font-sans);font-size:12.5px;font-weight:800;cursor:pointer;${g.lane ? 'background:var(--wwt-blue);color:#fff;border:1.5px solid var(--wwt-blue);' : 'background:var(--surface);color:var(--text);border:1.5px dashed var(--line-strong);'}`,
+          countLabel: gOrders.length + ' order' + (gOrders.length === 1 ? '' : 's'),
+          orders: gOrders, hasOrders: gOrders.length > 0, removed, empty: !gOrders.length && !removed.length,
+          canRemove: !gOrders.length && gsAll.length > 1, onRemoveLane: () => { if (!dnu) this._laneRemove(r.ot, g.id); },
+          onAddOrder: () => { if (!dnu) this._itemAdd(r.ot, g.id); } };
+      });
+      return { ot: r.ot, multi: !!r.multi, cells, open, orders, groups, noOrders: open && !r._count, addLock: dnu, showRow: !ovHidden,
+        onNewLane: () => { if (!dnu) this._laneAdd(r.ot); },
         onAddOrder: () => { if (!dnu) this._itemAdd(r.ot); },
         // "Do not use" — caution-button toggle, hazard-striped row, locked fields.
         dnuLock: dnu,
@@ -1777,10 +1847,21 @@ class Component extends DCLogic {
       ovJumpStyle: `position:fixed;bottom:26px;left:26px;z-index:35;transition:opacity 220ms,transform 220ms;${this.state.ovInView ? 'opacity:0;transform:translateY(12px);pointer-events:none;' : 'opacity:1;transform:none;'}`,
       zoneOptions, itemStatusOptions: statusOptions.filter(o => !(this.META[o.value] || {}).hazard), zoneCount: zones.length, columns, rows: rowsOut, resultCount, empty: resultCount === 0,
       hasDup, dupMsg,
-      showConfirm: !!this.state.confirmClear,
+      showConfirm: !!(this.state.confirmClear || this.state.confirmItem),
       confirmLoc: this.shortLoc(this.state.confirmClear),
-      onConfirmClear: () => this.clearRow(this.state.confirmClear),
-      onCancelClear: () => this.setState({ confirmClear: null }),
+      ...(() => {
+        const ci = this.state.confirmItem;
+        if (ci) { const w = ci.wo || '(no WO)'; return { confirmTitle: 'Remove order ' + w + '?', confirmBtn: 'Remove order',
+          confirmText: 'You are about to remove order ' + w + ' from ' + ci.bts + '. After removing, you have 60 seconds to restore it with the Restore button left in its place.' }; }
+        const cr = this.state.confirmClear ? ((this.state.data && this.state.data.records) || []).find(x => x.ot === this.state.confirmClear) : null;
+        const loc = this.shortLoc(this.state.confirmClear);
+        if (cr && cr.multi) { const n = this._items(cr).length; return { confirmTitle: 'Clear location ' + loc + '?', confirmBtn: 'Clear location',
+          confirmText: 'You are about to clear location ' + loc + ' — this removes all ' + n + ' order' + (n === 1 ? '' : 's') + ', their lanes and any Note. After clearing, you have 60 seconds to recover the deleted data with the restore icon.' }; }
+        return { confirmTitle: 'Clear location ' + loc + '?', confirmBtn: 'Clear location',
+          confirmText: 'You are about to clear location ' + loc + ' — this resets Work Order, Serial, LPN, Status, Date and any Note. After clearing, you have 60 seconds to recover the deleted data with the restore icon.' };
+      })(),
+      onConfirmClear: () => { const ci = this.state.confirmItem; if (ci) this._itemRemoveConfirmed(ci.ot, ci.i); else this.clearRow(this.state.confirmClear); },
+      onCancelClear: () => this.setState({ confirmClear: null, confirmItem: null }),
       stopProp: (e) => e.stopPropagation(),
     };
   }
