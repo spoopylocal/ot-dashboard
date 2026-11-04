@@ -327,3 +327,50 @@ test('GitHub Pages connects directly and subscribes to live updates', () => {
   assert.equal(subscribed, true);
   assert.equal(app.state.live, 'live');
 });
+
+test('typing batches dashboard redraws and saves the latest complete value', async () => {
+  const { app, timers, counts } = setup();
+  const sent = [];
+  app._sb = { from() { return { upsert(row) { sent.push(row); return Promise.resolve({}); } }; } };
+  app.updateField('A', 'wo', '1', true);
+  const first = counts().renders;
+  app.updateField('A', 'wo', '12', true);
+  app.updateField('A', 'wo', '123', true);
+  assert.equal(counts().renders, first);
+  assert.equal(app._edits.A.wo, '123');
+  assert.equal(timers.get(app._editRenderTimer).ms, 150);
+  assert.equal(timers.get(app._saveTimers.A).ms, 250);
+  timers.get(app._saveTimers.A).fn();
+  await tick();
+  assert.equal(app.state.data.records[0].wo, '123');
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].edits.wo, '123');
+});
+test('fast overflow typing preserves drafts across fields before redraw', () => {
+  const { app } = laneApp([{ wo: '', serial: '', g: 'L2' }]);
+  app._sb = null;
+  app._itemEdit('ZL4OVRFLWSTK04', 0, 'wo', '123', true);
+  app._itemEdit('ZL4OVRFLWSTK04', 0, 'serial', 'ABC', true);
+  const item = app._items(app._edits.ZL4OVRFLWSTK04)[0];
+  assert.equal(item.wo, '123'); assert.equal(item.serial, 'ABC'); assert.equal(item.g, 'L2');
+  app._flushDraftRender();
+  assert.equal(app._items(app.state.data.records[0])[0].serial, 'ABC');
+});
+test('REST fallback speeds up immediately when live connection fails', () => {
+  const { app, timers } = setup();
+  app._setLive('live'); assert.equal(timers.get(app._resyncTimer).ms, 10000);
+  app._setLive('reconnecting'); assert.equal(timers.get(app._resyncTimer).ms, 3000);
+});
+test('remote input updates preserve the focused value until blur', () => {
+  const { app, context, timers } = setup();
+  const idle = { value: 'old', getAttribute() { return 'remote'; } };
+  const focused = { value: 'typing', getAttribute() { return 'new'; } };
+  context.document.querySelectorAll = () => [idle, focused];
+  context.document.activeElement = focused;
+  app.componentDidUpdate();
+  assert.equal(idle.value, 'remote'); assert.equal(focused.value, 'typing');
+  context.document.activeElement = null;
+  app._onTextBlur({ currentTarget: focused });
+  [...timers.values()].find(t => t.ms === 0).fn();
+  assert.equal(focused.value, 'new');
+});

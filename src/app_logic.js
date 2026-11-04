@@ -57,6 +57,7 @@ class Component extends DCLogic {
   }
   componentWillUnmount() {
     this._disposed = true;
+    clearTimeout(this._editRenderTimer);
     Object.values(this._saveTimers || {}).forEach(clearTimeout);
     Object.values(this._retryTimers || {}).forEach(clearTimeout);
     if (this._sbChannel) this._sb.removeChannel(this._sbChannel);
@@ -144,13 +145,13 @@ class Component extends DCLogic {
   // edits.items as a JSON string, so sync, backups, restore and wipe treat it
   // as one plain text field like any other.
   _items(r) { try { const a = JSON.parse((r && r.items) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
-  _setItems(ot, items) { this.updateField(ot, 'items', items.length ? JSON.stringify(items) : ''); }
-  _rawRec(ot) { return ((this.state.data && this.state.data.records) || []).find(x => x.ot === ot) || {}; }
-  _itemEdit(ot, i, field, value) {
+  _setItems(ot, items, deferRender = false) { this.updateField(ot, 'items', items.length ? JSON.stringify(items) : '', deferRender); }
+  _rawRec(ot) { return { ...(((this.state.data && this.state.data.records) || []).find(x => x.ot === ot) || {}), ...(this._edits[ot] || {}) }; }
+  _itemEdit(ot, i, field, value, deferRender = false) {
     const items = this._items(this._rawRec(ot));
     if (!items[i]) return;
     items[i] = { ...items[i], [field]: value };
-    this._setItems(ot, items);
+    this._setItems(ot, items, deferRender);
   }
   _itemAdd(ot, gid) {
     this._setItems(ot, this._items(this._rawRec(ot)).concat([{ wo: '', serial: '', lpn: '', status: '', date: '', g: gid === 'L2' ? 'L2' : 'L1' }]));
@@ -347,10 +348,9 @@ class Component extends DCLogic {
   SB_KEY = 'sb_publishable_RdP1sAi9b6N1VbFHsJZLbw_yhcJmjRZ';
   get SB_URL() { return this.SB_DIRECT; }
   _viaProxy() { return this.SB_URL !== this.SB_DIRECT; }
-  // Realtime can't be proxied (no WebSocket upgrade through Netlify), so while
-  // we're on the proxy the REST poll is the only channel that catches other
-  // people's edits — run it more often to keep the lag down.
-  _pollMs() { return this._viaProxy() ? 3000 : 45000; }
+  // Keep a fast REST fallback while live updates are unavailable. A healthy
+  // live channel needs fewer safety reads to conserve database bandwidth.
+  _pollMs() { return this._viaProxy() || this.state.live !== 'live' ? 3000 : 10000; }
   // ======================================================================
 
   _sbConfigured() { return this.SB_URL.indexOf('YOUR-PROJECT') === -1; }
@@ -440,7 +440,11 @@ class Component extends DCLogic {
       this._schedulePoll();
     }, delay);
   }
-  _setLive(s) { if (s !== this.state.live) this.setState({ live: s }); }
+  _setLive(s) {
+    if (s === this.state.live) return;
+    this.setState({ live: s });
+    this._schedulePoll();
+  }
 
   // Reconcile local state with the datastore over REST (which stays reachable
   // even when the realtime WebSocket is blocked). Safe to call often: it never
@@ -540,6 +544,7 @@ class Component extends DCLogic {
   _persist(ot) {
     this._dirty = this._dirty || {};
     this._dirty[ot] = true;
+    this._flushDraftRender();
     clearTimeout((this._saveTimers || {})[ot]);
     if (this._saveTimers) delete this._saveTimers[ot];
     try { localStorage.setItem(this.LS_KEY, JSON.stringify(this._edits)); } catch (err) {}
@@ -593,7 +598,7 @@ class Component extends DCLogic {
     this._saveIndicator();
     this._saveTimers = this._saveTimers || {};
     clearTimeout(this._saveTimers[ot]);
-    this._saveTimers[ot] = setTimeout(() => { delete this._saveTimers[ot]; this._persist(ot); }, 500);
+    this._saveTimers[ot] = setTimeout(() => { delete this._saveTimers[ot]; this._persist(ot); }, 250);
   }
 
   // --- Live presence: "someone is editing" + live viewer count ----------
@@ -1164,11 +1169,54 @@ class Component extends DCLogic {
       return { statusFilter: arr.length === 0 ? 'all' : arr };
     });
   }
-  updateField(ot, field, value) {
+  // Native text inputs paint each keystroke themselves. Batch the expensive
+  // dashboard redraw after a short pause; persistence remains independent.
+  _queueDraftRender(ot) {
+    this._draftOts = this._draftOts || {};
+    this._draftOts[ot] = true;
+    clearTimeout(this._editRenderTimer);
+    this._editRenderTimer = setTimeout(() => this._flushDraftRender(), 150);
+  }
+  _flushDraftRender() {
+    clearTimeout(this._editRenderTimer);
+    const pending = this._draftOts;
+    if (!pending || !Object.keys(pending).length || this._disposed) return;
+    this._draftOts = {};
+    this.setState(s => {
+      if (!s.data) return {};
+      const records = s.data.records.map(r => pending[r.ot] ? { ...r, ...this._edits[r.ot] } : r);
+      const sel = s.sel && pending[s.sel.ot] ? { ...s.sel, ...this._edits[s.sel.ot] } : s.sel;
+      return { data: { ...s.data, records }, sel };
+    });
+  }
+  _onTextBlur(event) {
+    this._flushDraftRender();
+    const input = event.currentTarget;
+    // The redraw commits after this event; then reconcile any value that
+    // arrived remotely while this input had focus.
+    setTimeout(() => {
+      if (!this._disposed && input !== document.activeElement) {
+        input.value = input.getAttribute('data-ot-value') || '';
+      }
+    }, 0);
+  }
+  componentDidUpdate() {
+    // defaultValue keeps typing local; apply remote values to idle inputs.
+    if (this._inputData === this.state.data) return;
+    this._inputData = this.state.data;
+    document.querySelectorAll('input[data-ot-value]').forEach(input => {
+      if (input !== document.activeElement) {
+        const value = input.getAttribute('data-ot-value') || '';
+        if (input.value !== value) input.value = value;
+      }
+    });
+  }
+  updateField(ot, field, value, deferRender = false) {
     // Update the on-screen value immediately so typing stays responsive...
     this._edits[ot] = this._edits[ot] || {};
     this._edits[ot][field] = value;
-    this.setState(s => {
+    if (deferRender) this._queueDraftRender(ot);
+    else this.setState(s => {
       const records = s.data.records.map(r => r.ot === ot ? { ...r, [field]: value } : r);
       const sel = s.sel && s.sel.ot === ot ? { ...s.sel, [field]: value } : s.sel;
       return { data: { ...s.data, records }, sel };
@@ -1662,7 +1710,8 @@ class Component extends DCLogic {
         // text / number
         const dup = !!(f.dup && isDupVal(dupCounts[f.key], val));
         return { key: f.key, isInput: true, val, dnuLock: dnu,
-          onChange: (e) => this.updateField(r.ot, f.key, e.target.value),
+          onChange: (e) => this.updateField(r.ot, f.key, e.target.value, true),
+          onBlur: (e) => this._onTextBlur(e),
           inputStyle: dupInput(dup) + dnuDim + hl,
           dupTitle: dup ? ('Duplicate detected — this value appears ' + dupCounts[f.key][val.trim()] + ' times') : '',
           onCopy, title: 'Right-click to copy', tdStyle: `padding:6px 10px;${bdr}white-space:nowrap;` };
@@ -1671,7 +1720,7 @@ class Component extends DCLogic {
         + (dup ? 'border:1px solid var(--wwt-bright-red);background:var(--wwt-bright-red-25);color:var(--wwt-red-deep);font-weight:700;' : 'border:1px solid var(--line);background:var(--surface);color:var(--text);');
       const orders = open ? (r._items || []).map((it, i) => {
         const im = this.metaFor(it.status), idark = this.norm(it.status) !== 'Pending';
-        const inp = (k) => ({ val: it[k] || '', onChange: (e) => this._itemEdit(r.ot, i, k, e.target.value),
+        const inp = (k) => ({ val: it[k] || '', onChange: (e) => this._itemEdit(r.ot, i, k, e.target.value, true), onBlur: (e) => this._onTextBlur(e),
           style: iStyle(!!(dupCounts[k] && isDupVal(dupCounts[k], it[k]))) + (hit(it[k], true) ? HL : '') });
         const d0 = (it.date || '').trim();
         const iIssue = this.norm(it.status) === 'Issue/Hold';
