@@ -6,7 +6,7 @@ const vm = require('node:vm');
 function setup() {
   let id = 0, writes = 0, renders = 0;
   const timers = new Map();
-  const context = { DCLogic: class {}, console: { warn() {} }, location: { hostname: 'example.netlify.app', protocol: 'https:', origin: 'https://example.netlify.app' }, document: { hidden: false },
+  const context = { DCLogic: class {}, console: { warn() {} }, location: { hostname: 'spoopylocal.github.io', protocol: 'https:', origin: 'https://spoopylocal.github.io', pathname: '/ot-dashboard/' }, document: { hidden: false },
     localStorage: { setItem() { writes++; }, getItem() { return null; } },
     setTimeout(fn, ms) { timers.set(++id, { fn, ms }); return id; }, clearTimeout(i) { timers.delete(i); }, clearInterval(i) { timers.delete(i); }, setInterval() {},
   };
@@ -113,12 +113,14 @@ test('response begun before acknowledgment is discarded', async () => {
 });
 test('proxy mode never starts websocket channels', () => {
   const { app } = setup();
+  app._viaProxy = () => true;
   app._sb = { channel() { assert.fail('WebSocket attempted'); } };
   app._subscribeLive(); app._initPresence();
   assert.equal(app._pollMs(), 3000);
 });
 test('poll failures back off and recover on success', async () => {
   const { app, timers } = setup();
+  app._viaProxy = () => true;
   reader(app, { error: new Error('offline') });
   await app._resync('poll'); app._schedulePoll();
   assert.equal(timers.get(app._resyncTimer).ms, 6000);
@@ -304,4 +306,24 @@ test('trash can is disabled on overflow rows only; lane survives backup', () => 
   ov.onClearRow(); assert.equal(app.state.confirmClear || null, null);
   assert.equal(nr.clearOk, true); nr.onClearRow(); assert.equal(app.state.confirmClear, 'NA1L4OT0101');
   assert.match(app._canonSnapshot().ZL4OVRFLWSTK04.items, /"g":"L2"/);
+});
+
+test('GitHub Pages connects directly and subscribes to live updates', () => {
+  const { app } = setup();
+  assert.equal(app.SB_URL, 'https://ufsszfghfbgclrtlzknf.supabase.co');
+  assert.equal(app._viaProxy(), false);
+  let subscribed = false;
+  const channel = {
+    on(event, filter, handler) {
+      assert.equal(event, 'postgres_changes');
+      assert.equal(filter.table, 'ot_edits');
+      return this;
+    },
+    subscribe(callback) { subscribed = true; callback('SUBSCRIBED'); return this; }
+  };
+  app._resync = () => {};
+  app._sb = { channel(name) { assert.equal(name, 'ot_edits_live'); return channel; } };
+  app._subscribeLive();
+  assert.equal(subscribed, true);
+  assert.equal(app.state.live, 'live');
 });

@@ -341,25 +341,11 @@ class Component extends DCLogic {
   // === Shared live backend (Supabase) ===================================
   // The anon key is meant to be public in client code; access is limited by
   // Row Level Security policies on the ot_edits table.
-  // The project's own hostname. Used directly for local work; on a deployed
-  // origin we go through the same-origin /sb proxy instead (see below).
+  // GitHub Pages serves static files and cannot forward /sb requests.
+  // This branch connects directly to Supabase for REST and Realtime.
   SB_DIRECT = 'https://ufsszfghfbgclrtlzknf.supabase.co';
   SB_KEY = 'sb_publishable_RdP1sAi9b6N1VbFHsJZLbw_yhcJmjRZ';
-  // Corporate DNS filtering (Cisco Umbrella) intercepts the Supabase hostname
-  // on the warehouse network and answers CORS preflights with a 303 to http://,
-  // which browsers refuse — every client lost the database and fell back to
-  // localStorage, so nobody saw anyone else's edits. Talking to our own origin
-  // avoids both the filtered hostname and the preflight; netlify.toml forwards
-  // /sb to Supabase server-side. Localhost/file:// keep the direct URL so local
-  // preview still works without a proxy in front of it.
-  get SB_URL() {
-    try {
-      const h = location.hostname;
-      if (location.protocol !== 'http:' && location.protocol !== 'https:') return this.SB_DIRECT;
-      if (h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '') return this.SB_DIRECT;
-      return location.origin + '/sb';
-    } catch (e) { return this.SB_DIRECT; }
-  }
+  get SB_URL() { return this.SB_DIRECT; }
   _viaProxy() { return this.SB_URL !== this.SB_DIRECT; }
   // Realtime can't be proxied (no WebSocket upgrade through Netlify), so while
   // we're on the proxy the REST poll is the only channel that catches other
