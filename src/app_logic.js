@@ -163,7 +163,7 @@ class Component extends DCLogic {
     const source = this._rawRec(ot);
     const order = this._orderAt(source, index);
     if (!this._canTransfer(source) || !this._hasOrder(order)) return;
-    this.setState({ move: { source, index, order, target: null, lane: '', error: '' }, moveNotice: '' });
+    this.setState({ move: { source, index, order, target: null, lane: '', error: '', query: '', filter: 'All', page: 0 }, moveNotice: '' });
     requestAnimationFrame(() => {
       const dialog = document.getElementById('ot-move-dialog');
       if (dialog && !dialog.open) dialog.showModal();
@@ -235,26 +235,43 @@ class Component extends DCLogic {
     if (!m) return {};
     const label = r => [r.bts, r.ot].filter(Boolean).join(' / ');
     const options = [];
+    const terms = m.query.toLowerCase().trim().split(/\s+/).filter(Boolean);
     for (const r of this.state.data.records) {
       if (r.ot === m.source.ot || !this._canTransfer(r)) continue;
-      if (r.multi) {
-        for (const lane of this.LANES) options.push({ record: r, lane: lane.id, label: label(r) + ' · Lane ' + lane.lane });
-      } else {
-        const other = this._orderAt(r);
-        options.push({ record: r, lane: '', label: label(r) + ' · ' + (this._hasOrder(other) ? (other.wo || 'Occupied') : 'Empty') });
+      const kind = r.multi ? 'Overflow' : this._hasOrder(r) ? 'Occupied' : 'Empty';
+      if (m.filter !== 'All' && m.filter !== kind) continue;
+      const items = r.multi ? this._items(r) : [];
+      for (const lane of r.multi ? this.LANES : [null]) {
+        const laneId = lane?.id || '';
+        const orders = lane ? items.filter(it => this._laneOf(it) === laneId) : [r];
+        const name = (r.bts || r.ot) + (lane ? ' · Lane ' + lane.lane : '');
+        const searchable = [name, r.ot, r.zone, kind, ...orders.map(it => it.wo)].join(' ').toLowerCase();
+        if (!terms.every(term => searchable.includes(term))) continue;
+        const selected = m.target?.ot === r.ot && m.lane === laneId;
+        options.push({ ot: r.ot, lane: laneId, name, detail: r.bts ? r.ot : r.zone, selected,
+          badge: lane ? orders.length + (orders.length === 1 ? ' order' : ' orders') : r.wo || kind,
+          className: 'move-option' + (selected ? ' is-selected' : ''),
+          choose: () => this.setState({ move: { ...m, target: r, lane: laneId, error: '' } }) });
       }
     }
+    const pageSize = 4;
+    const pages = Math.ceil(options.length / pageSize);
+    const page = Math.min(m.page, Math.max(0, pages - 1));
+    const start = page * pageSize;
+    const browse = patch => this.setState({ move: { ...m, target: null, lane: '', error: '', page: 0, ...patch } });
     const swap = m.target && !m.target.multi && this._hasOrder(this._orderAt(m.target));
     return { showMove: true, moveTitle: 'Move ' + (m.order.wo || 'order'), moveFrom: 'From ' + label(m.source),
-      moveOptions: options.map(o => ({ value: JSON.stringify([o.record.ot, o.lane]), label: o.label })),
-      moveValue: m.target ? JSON.stringify([m.target.ot, m.lane]) : '',
+      moveOptions: options.slice(start, start + pageSize), moveQuery: m.query,
+      onMoveSearch: e => browse({ query: e.target.value }),
+      moveFilters: ['All', 'Empty', 'Occupied', 'Overflow'].map(name => ({ name, active: m.filter === name,
+        className: 'move-filter' + (m.filter === name ? ' is-active' : ''), choose: () => browse({ filter: name }) })),
+      moveEmpty: !options.length, showMovePages: pages > 1,
+      moveRange: options.length ? (start + 1) + '–' + Math.min(start + pageSize, options.length) + ' of ' + options.length : '0 locations',
+      movePrevDisabled: m.busy || page === 0, moveNextDisabled: m.busy || page + 1 >= pages,
+      prevMovePage: () => browse({ page: page - 1 }), nextMovePage: () => browse({ page: page + 1 }),
       movePreview: swap ? (m.target.wo || 'The destination order') + ' will move to ' + m.source.ot + '.' : '',
       moveButton: m.busy ? 'Saving…' : swap ? 'Swap orders' : 'Move order', moveBusy: !!m.busy,
       moveDisabled: !m.target || !!m.busy, moveError: m.error,
-      onMoveTarget: e => {
-        const o = options.find(o => JSON.stringify([o.record.ot, o.lane]) === e.target.value);
-        this.setState({ move: { ...m, target: o?.record, lane: o?.lane, error: '' } });
-      },
       onMoveCancel: () => { if (!this._moving) this.setState({ move: null }); },
       onMoveEscape: e => { e.preventDefault(); if (!this._moving) this.setState({ move: null }); },
       onMoveConfirm: () => this._confirmMove() };
