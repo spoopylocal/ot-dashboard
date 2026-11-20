@@ -147,6 +147,119 @@ class Component extends DCLogic {
   _items(r) { try { const a = JSON.parse((r && r.items) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
   _setItems(ot, items, deferRender = false) { this.updateField(ot, 'items', items.length ? JSON.stringify(items) : '', deferRender); }
   _rawRec(ot) { return { ...(((this.state.data && this.state.data.records) || []).find(x => x.ot === ot) || {}), ...(this._edits[ot] || {}) }; }
+  _orderFields() {
+    return [...new Set(['wo', 'serial', 'lpn', 'status', 'date', ...this._dataFields().map(f => f.key)])];
+  }
+  _orderAt(record, index) {
+    if (record.multi) return this._items(record)[index];
+    return Object.fromEntries(this._orderFields().map(key => [key, record[key] ?? '']));
+  }
+  _hasOrder(order) {
+    return !!order && this._orderFields().some(key => String(order[key] ?? '').trim() !== '');
+  }
+  _canTransfer(record) {
+    return !!record.ot && !record.obstructed && !this.metaFor(record.status).hazard;
+  }
+  _openMove(ot, index) {
+    const source = this._rawRec(ot);
+    const order = this._orderAt(source, index);
+    if (!this._canTransfer(source) || !this._hasOrder(order)) return;
+    this.setState({ move: { source, index, order, target: null, lane: '', error: '' }, moveNotice: '' });
+    requestAnimationFrame(() => {
+      const dialog = document.getElementById('ot-move-dialog');
+      if (dialog && !dialog.open) dialog.showModal();
+    });
+  }
+  _transferEdits(record, incoming, index, lane) {
+    const edits = { ...this._edits[record.ot] };
+    if (record.multi) {
+      const items = this._items(record);
+      if (index == null) items.push({ ...incoming, g: lane });
+      else if (incoming) items[index] = { ...incoming, g: this._laneOf(items[index]) };
+      else items.splice(index, 1);
+      edits.items = items.length ? JSON.stringify(items) : '';
+    } else {
+      for (const key of this._orderFields()) edits[key] = incoming?.[key] ?? '';
+    }
+    return edits;
+  }
+  async _confirmMove() {
+    const m = this.state.move;
+    if (!m?.target || this._moving) return;
+    const source = this._rawRec(m.source.ot), target = this._rawRec(m.target.ot);
+    const fail = error => this.setState({ move: { ...m, error } });
+    if (!this._canTransfer(source) || !this._canTransfer(target) || source.ot === target.ot ||
+        this._stableJson(source) !== this._stableJson(m.source) || this._stableJson(target) !== this._stableJson(m.target)) {
+      fail('A location changed. Cancel and reopen Move to review the current orders.');
+      return;
+    }
+    if (this._dirty?.[source.ot] || this._dirty?.[target.ot]) {
+      fail('Edits are still saving. Try again when the tracker shows Saved.');
+      return;
+    }
+    const other = target.multi ? null : this._orderAt(target);
+    const sourceBefore = { ...this._edits[source.ot] };
+    const destinationBefore = { ...this._edits[target.ot] };
+    const sourceAfter = this._transferEdits(source, this._hasOrder(other) ? other : null, m.index);
+    const destinationAfter = this._transferEdits(target, m.order, null, m.lane);
+    this._moving = true;
+    this.setState({ move: { ...m, busy: true, error: '' } });
+    try {
+      if (!this._sb) await this._initSupabase();
+      if (!this._sb) throw new Error();
+      const { error } = await this._sb.rpc('transfer_ot_order', {
+        source_ot: source.ot, destination_ot: target.ot,
+        source_before: sourceBefore, destination_before: destinationBefore,
+        source_after: sourceAfter, destination_after: destinationAfter
+      });
+      if (error) throw error;
+      this._writeGeneration = (this._writeGeneration || 0) + 1;
+      this._edits[source.ot] = sourceAfter;
+      this._edits[target.ot] = destinationAfter;
+      try { localStorage.setItem(this.LS_KEY, JSON.stringify(this._edits)); } catch (e) {}
+      const records = this._composeRecords();
+      this.setState(s => {
+        const cleared = { ...s.cleared };
+        delete cleared[source.ot];
+        delete cleared[target.ot];
+        return { move: null, cleared, data: { records }, sel: records.find(r => r.ot === target.ot),
+          openRows: { ...s.openRows, [target.ot]: !!target.multi }, moveNotice: (this._hasOrder(other) ? 'Swapped orders with ' : 'Moved order to ') + target.ot };
+      });
+    } catch (error) {
+      fail(error?.code === 'PT409' ? 'A location changed. Cancel and reopen Move to review the current orders.'
+        : 'Could not confirm the move. Check your connection and review both locations before trying again.');
+      await this._resync('move');
+    } finally { this._moving = false; }
+  }
+  _moveUI() {
+    const m = this.state.move;
+    if (!m) return {};
+    const label = r => [r.bts, r.ot].filter(Boolean).join(' / ');
+    const options = [];
+    for (const r of this.state.data.records) {
+      if (r.ot === m.source.ot || !this._canTransfer(r)) continue;
+      if (r.multi) {
+        for (const lane of this.LANES) options.push({ record: r, lane: lane.id, label: label(r) + ' · Lane ' + lane.lane });
+      } else {
+        const other = this._orderAt(r);
+        options.push({ record: r, lane: '', label: label(r) + ' · ' + (this._hasOrder(other) ? (other.wo || 'Occupied') : 'Empty') });
+      }
+    }
+    const swap = m.target && !m.target.multi && this._hasOrder(this._orderAt(m.target));
+    return { showMove: true, moveTitle: 'Move ' + (m.order.wo || 'order'), moveFrom: 'From ' + label(m.source),
+      moveOptions: options.map(o => ({ value: JSON.stringify([o.record.ot, o.lane]), label: o.label })),
+      moveValue: m.target ? JSON.stringify([m.target.ot, m.lane]) : '',
+      movePreview: swap ? (m.target.wo || 'The destination order') + ' will move to ' + m.source.ot + '.' : '',
+      moveButton: m.busy ? 'Saving…' : swap ? 'Swap orders' : 'Move order', moveBusy: !!m.busy,
+      moveDisabled: !m.target || !!m.busy, moveError: m.error,
+      onMoveTarget: e => {
+        const o = options.find(o => JSON.stringify([o.record.ot, o.lane]) === e.target.value);
+        this.setState({ move: { ...m, target: o?.record, lane: o?.lane, error: '' } });
+      },
+      onMoveCancel: () => { if (!this._moving) this.setState({ move: null }); },
+      onMoveEscape: e => { e.preventDefault(); if (!this._moving) this.setState({ move: null }); },
+      onMoveConfirm: () => this._confirmMove() };
+  }
   _itemEdit(ot, i, field, value, deferRender = false) {
     const items = this._items(this._rawRec(ot));
     if (!items[i]) return;
@@ -1355,7 +1468,8 @@ class Component extends DCLogic {
       viewerTitle: this._viaProxy()
         ? (this.state.live === 'synced' ? 'Checking for updates every 3 seconds while visible. Viewer count unavailable on this connection.' : 'Database connection unavailable or still connecting. Unsaved edits retry automatically while this page stays open.')
         : (this.state.viewers + ' viewer(s) · ' + this.state.live),
-      ...this._adminUI() };
+      ...this._adminUI(), ...this._moveUI(), moveNotice: this.state.moveNotice,
+      dismissMoveNotice: () => this.setState({ moveNotice: '' }) };
     if (!d) {
       return { ...base, total: '—', otPct: '—', otDone: '—', btsDone: '—', activeTotal: '—',
         ringSegs: [], ringMain: '—', ringSub: 'Loading', ringMainColor: 'var(--text)',
@@ -1725,7 +1839,8 @@ class Component extends DCLogic {
         const d0 = (it.date || '').trim();
         const iIssue = this.norm(it.status) === 'Issue/Hold';
         return { num: i + 1, wo: inp('wo'), serial: inp('serial'), lpn: inp('lpn'), lock: dnu,
-          lineStyle: 'display:grid;grid-template-columns:28px repeat(3,minmax(130px,1fr)) 150px 130px 28px;gap:8px;align-items:center;padding:4px 6px;border-radius:4px;'
+          canMove: !dnu && this._hasOrder(it), onMove: () => this._openMove(r.ot, i),
+          lineStyle: 'display:grid;grid-template-columns:28px repeat(3,minmax(130px,1fr)) 150px 130px 75px;gap:8px;align-items:center;padding:4px 6px;border-radius:4px;'
             + (iIssue ? 'background-color:rgba(238,40,42,0.09);background-image:repeating-linear-gradient(45deg,rgba(238,40,42,0.16) 0 7px,transparent 7px 14px);box-shadow:inset 4px 0 0 var(--wwt-bright-red);' : ''),
           statusVal: (it.status || '').trim(), onStatus: (e) => this._itemEdit(r.ot, i, 'status', e.target.value),
           selStyle: `width:100%;appearance:auto;border:1px solid ${idark ? 'transparent' : 'var(--line-strong)'};border-radius:999px;padding:4px 8px;font-family:var(--font-sans);font-size:11px;font-weight:700;cursor:pointer;background:${im.color};color:${idark ? '#fff' : 'var(--gray-600)'};${dnuDim}`,
@@ -1757,6 +1872,7 @@ class Component extends DCLogic {
         clearLock: !!r.multi,
         clearTitle: r.multi ? 'Overflow locations can\'t be cleared all at once. Remove orders one at a time with ×.' : 'Clear this row\'s entries',
         clearOk: !r.multi,
+        canMove: !r.multi && this._canTransfer(r) && this._hasOrder(r), onMove: () => this._openMove(r.ot),
         onNote: () => this.setState({ noteEdit: r.ot, noteText: r.note || '', noteHover: null }),
         onNoteEnter: (e) => { if (!(r.note && r.note.trim())) return; const b = e.currentTarget.getBoundingClientRect(); this.setState({ noteHover: { ot: r.ot, text: r.note, x: b.left + b.width / 2, y: b.top } }); },
         noteTitle: (r.note && r.note.trim()) ? r.note : 'Add a Note',

@@ -22,6 +22,41 @@ function setup() {
 }
 const deferred = () => { let resolve; const promise = new Promise(r => resolve = r); return { resolve, promise }; };
 const tick = () => new Promise(r => setImmediate(r));
+
+test('swap an occupied location with one overflow order, preserving the lane, other orders and location notes', async () => {
+  const { app, context } = setup();
+  context.requestAnimationFrame = () => {};
+  app._seedRecords = [
+    { ot: 'A', zone: '0100', wo: 'Seed WO', lpn: 'Pallet', note: 'Dock note' },
+    { ot: 'B', zone: 'Overflow', multi: true },
+  ];
+  const sibling = { wo: 'Sibling' };
+  app._edits.B = { items: JSON.stringify([sibling, { wo: 'Overflow WO', serial: 'Unit', g: 'L2' }]), note: 'Lane note' };
+  app.state.data.records = app._composeRecords();
+  let saved;
+  app._sb = { rpc: async (name, args) => { assert.equal(name, 'transfer_ot_order'); saved = args; return {}; } };
+  app._openMove('B', 1);
+  app._moveUI().onMoveTarget({ target: { value: JSON.stringify(['A', '']) } });
+  assert.equal(app._moveUI().moveButton, 'Swap orders');
+  await app._confirmMove();
+  assert.deepEqual(JSON.parse(saved.source_after.items)[0], sibling);
+  const swapped = JSON.parse(saved.source_after.items)[1];
+  assert.equal(swapped.g, 'L2');
+  assert.equal(swapped.wo, 'Seed WO');
+  assert.equal(swapped.lpn, 'Pallet');
+  assert.equal(app._rawRec('A').serial, 'Unit');
+  assert.equal(app._rawRec('A').note, 'Dock note');
+  assert.equal(app._rawRec('B').note, 'Lane note');
+
+  app._openMove('A');
+  app._moveUI().onMoveTarget({ target: { value: JSON.stringify(['B', 'L1']) } });
+  await app._confirmMove();
+  assert.equal(app._rawRec('A').wo, '');
+  const overflow = JSON.parse(app._rawRec('B').items);
+  assert.equal(overflow.length, 3);
+  assert.equal(overflow[2].g, 'L1');
+  assert.equal(overflow[2].wo, 'Overflow WO');
+});
 function reader(app, response) {
   const filters = [];
   app._sb = { from(name) { assert.equal(name, 'ot_edits'); return { select(columns) { assert.equal(columns, 'ot,edits'); return { or(filter) { filters.push(filter); return typeof response === 'function' ? response() : Promise.resolve(response); } }; } }; } };
