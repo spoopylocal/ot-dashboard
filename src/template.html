@@ -498,16 +498,32 @@
   -moz-osx-font-smoothing: grayscale;
 }
 .ot-move-link { color:var(--wwt-blue); background:var(--surface); border:1px solid var(--line); border-radius:4px; font:600 12px var(--font-sans); padding:4px 6px; cursor:pointer; }
-#ot-move-dialog { background:var(--surface); color:var(--text); border:1px solid var(--line); border-radius:8px; width:min(420px,90vw); padding:24px; box-sizing:border-box; box-shadow:var(--shadow-xl); }
+#ot-move-dialog { background:var(--surface); color:var(--text); border:1px solid var(--line); border-radius:12px; width:min(440px,94vw); max-height:92vh; padding:22px; box-sizing:border-box; box-shadow:var(--shadow-xl); }
 #ot-move-dialog::backdrop { background:rgba(11,11,12,.55); }
 #ot-move-dialog h2 { margin:0; font-size:20px; }
 #ot-move-dialog p { font-size:14px; overflow-wrap:anywhere; }
-#ot-move-dialog label { display:block; margin:20px 0; font-weight:700; }
-#ot-move-dialog select { display:block; width:100%; margin-top:6px; padding:8px; }
+#ot-move-dialog label { display:block; margin:16px 0 6px; font-size:13px; font-weight:700; }
+#ot-move-dialog input { width:100%; box-sizing:border-box; padding:9px 12px; border:1px solid var(--line-strong); border-radius:6px; background:var(--surface-2); color:var(--text); font:inherit; }
 #ot-move-dialog footer { display:flex; justify-content:flex-end; gap:8px; }
 #ot-move-dialog button, .ot-move-notice button { border:1px solid var(--line-strong); border-radius:4px; padding:7px 12px; background:var(--surface); color:var(--text); cursor:pointer; }
 #ot-move-dialog .ot-move-submit { background:var(--wwt-blue); color:white; }
 #ot-move-dialog button:disabled { opacity:.5; cursor:default; }
+#ot-move-dialog .move-filters { display:flex; gap:4px; flex-wrap:wrap; margin:8px 0; }
+#ot-move-dialog .move-filter { border-radius:16px; padding:4px 10px; font-size:12px; }
+#ot-move-dialog .move-filter.is-active { background:var(--text); color:var(--surface); border-color:var(--text); }
+#ot-move-dialog .move-results { border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+#ot-move-dialog .move-option { width:100%; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:7px 10px; border:0; border-radius:0; text-align:left; font:inherit; }
+#ot-move-dialog .move-option + .move-option { border-top:1px solid var(--line); }
+#ot-move-dialog .move-option:hover { background:var(--surface-2); }
+#ot-move-dialog .move-option.is-selected { background:var(--sel-bg); box-shadow:inset 3px 0 var(--wwt-light-blue); }
+#ot-move-dialog .move-option:focus-visible { outline-offset:-3px; }
+.move-option strong, .move-option small { display:block; overflow-wrap:anywhere; }
+.move-option strong { font-size:13px; }
+.move-option small, .move-count { color:var(--muted); font-size:11px; }
+.move-badge { max-width:48%; overflow-wrap:anywhere; font:500 12px var(--font-mono); color:var(--muted); text-align:right; }
+.move-pagination { display:flex; align-items:center; justify-content:space-between; min-height:28px; margin:6px 0 14px; }
+#ot-move-dialog .move-pagination button { padding:3px 8px; font-size:12px; }
+#ot-move-dialog .move-no-results { padding:4px 10px; color:var(--muted); }
 .ot-move-notice { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:39; padding:8px 12px; border:1px solid var(--line); background:var(--surface); color:var(--text); border-radius:5px; box-shadow:var(--shadow-md); }
 </style>
 <script src="85382d1d-24dc-4fbd-ab4f-5461ed40d343"></script>
@@ -839,12 +855,23 @@
     <dialog id="ot-move-dialog" aria-labelledby="ot-move-title" sc-camel-on-cancel="{{ onMoveEscape }}">
       <h2 id="ot-move-title">{{ moveTitle }}</h2>
       <p>{{ moveFrom }}</p>
-      <label>Destination
-        <sc-raw-select value="{{ moveValue }}" sc-camel-disabled="{{ moveBusy }}" sc-camel-on-change="{{ onMoveTarget }}">
-          <option value="">Choose a location</option>
-          <sc-for list="{{ moveOptions }}" as="opt"><option value="{{ opt.value }}">{{ opt.label }}</option></sc-for>
-        </sc-raw-select>
-      </label>
+      <label for="ot-move-search">Destination</label>
+      <input id="ot-move-search" type="search" placeholder="Search location, zone or work order" value="{{ moveQuery }}" sc-camel-on-change="{{ onMoveSearch }}" sc-camel-disabled="{{ moveBusy }}">
+      <div class="move-filters" role="group" aria-label="Destination type">
+        <sc-for list="{{ moveFilters }}" as="f"><button class="{{ f.className }}" aria-pressed="{{ f.active }}" sc-camel-disabled="{{ moveBusy }}" sc-camel-on-click="{{ f.choose }}">{{ f.name }}</button></sc-for>
+      </div>
+      <div class="move-results" role="group" aria-label="Matching destinations">
+        <sc-for list="{{ moveOptions }}" as="opt"><button class="{{ opt.className }}" aria-pressed="{{ opt.selected }}" sc-camel-disabled="{{ moveBusy }}" sc-camel-on-click="{{ opt.choose }}">
+          <span><strong>{{ opt.name }}</strong><small>{{ opt.detail }}</small></span><span class="move-badge">{{ opt.badge }}</span>
+        </button></sc-for>
+        <sc-if value="{{ moveEmpty }}"><p class="move-no-results">No matching locations. Try another search or filter.</p></sc-if>
+      </div>
+      <div class="move-pagination"><span class="move-count" aria-live="polite">{{ moveRange }}</span>
+        <sc-if value="{{ showMovePages }}"><span>
+          <button sc-camel-disabled="{{ movePrevDisabled }}" sc-camel-on-click="{{ prevMovePage }}">Previous</button>
+          <button sc-camel-disabled="{{ moveNextDisabled }}" sc-camel-on-click="{{ nextMovePage }}">Next</button>
+        </span></sc-if>
+      </div>
       <sc-if value="{{ movePreview }}"><p>{{ movePreview }}</p></sc-if>
       <sc-if value="{{ moveError }}"><p role="alert">{{ moveError }}</p></sc-if>
       <footer><button sc-camel-disabled="{{ moveBusy }}" sc-camel-on-click="{{ onMoveCancel }}">Cancel</button>

@@ -36,7 +36,7 @@ test('swap an occupied location with one overflow order, preserving the lane, ot
   let saved;
   app._sb = { rpc: async (name, args) => { assert.equal(name, 'transfer_ot_order'); saved = args; return {}; } };
   app._openMove('B', 1);
-  app._moveUI().onMoveTarget({ target: { value: JSON.stringify(['A', '']) } });
+  app._moveUI().moveOptions.find(o => o.ot === 'A').choose();
   assert.equal(app._moveUI().moveButton, 'Swap orders');
   await app._confirmMove();
   assert.deepEqual(JSON.parse(saved.source_after.items)[0], sibling);
@@ -49,7 +49,7 @@ test('swap an occupied location with one overflow order, preserving the lane, ot
   assert.equal(app._rawRec('B').note, 'Lane note');
 
   app._openMove('A');
-  app._moveUI().onMoveTarget({ target: { value: JSON.stringify(['B', 'L1']) } });
+  app._moveUI().moveOptions.find(o => o.ot === 'B' && o.lane === 'L1').choose();
   await app._confirmMove();
   assert.equal(app._rawRec('A').wo, '');
   const overflow = JSON.parse(app._rawRec('B').items);
